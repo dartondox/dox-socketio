@@ -1,4 +1,4 @@
-## Unreleased (next alpha)
+## 3.0.0-alpha.13
 
 - The Redis adapter now sends requests to the other servers, like `@socket.io/redis-adapter`. Before, it only answered them. Dox and Node.js servers on one Redis work together, in both directions. Both msgpack and JSON work.
 - Breaking: `fetchSockets()` returns `Future<List<RemoteSocket>>`. It has the sockets of all servers. Sockets of this server are `Socket`s. Before, it returned `List<Socket>` of this server only.
