@@ -9,6 +9,7 @@ import 'client.dart';
 import 'handler_runner.dart';
 import 'handshake.dart';
 import 'namespace.dart';
+import 'remote_socket.dart';
 
 /// Handles one event from a client.
 typedef EventHandler = FutureOr<void> Function(SocketEvent event);
@@ -61,7 +62,7 @@ class SocketEvent {
 }
 
 /// One client connected to one namespace.
-class Socket {
+class Socket implements RemoteSocket {
   Socket({
     required this.id,
     required this.nsp,
@@ -71,18 +72,23 @@ class Socket {
   });
 
   /// Socket id. It is also a room this socket is in.
+  @override
   final String id;
 
   /// Namespace of this socket.
+  @override
   final Namespace nsp;
 
   /// The connection this socket uses.
   final Client client;
 
   /// Details of the connection request.
+  @override
   final Handshake handshake;
 
   /// Free storage for your own data, like the logged-in user.
+  /// `fetchSockets()` on other servers gets a copy of it, so keep it JSON.
+  @override
   final Map<String, Object?> data = <String, Object?>{};
 
   final HandlerRunner _runner;
@@ -90,7 +96,8 @@ class Socket {
       <String, List<EventHandler>>{};
   final Map<int, Completer<List<Object?>>> _acks =
       <int, Completer<List<Object?>>>{};
-  int _nextAckId = 0;
+  final Map<int, void Function(List<Object?> args)> _broadcastAcks =
+      <int, void Function(List<Object?> args)>{};
   bool _connected = false;
 
   /// True while the socket is connected.
@@ -100,6 +107,7 @@ class Socket {
   String get transport => client.conn.transport.name;
 
   /// Rooms this socket is in.
+  @override
   Set<String> get rooms => nsp.adapter.socketRooms(nsp, id);
 
   Adapter get _adapter => nsp.adapter;
@@ -120,11 +128,13 @@ class Socket {
   }
 
   /// Sends [event] to this client. Null [data] sends no argument.
+  @override
   void emit(String event, [Object? data]) {
     emitArgs(event, data == null ? const <Object?>[] : <Object?>[data]);
   }
 
   /// Sends [event] with many arguments to this client.
+  @override
   void emitArgs(String event, List<Object?> args) {
     _checkEventName(event);
     sendPacket(
@@ -145,7 +155,7 @@ class Socket {
     Duration? timeout,
   }) {
     _checkEventName(event);
-    int id = _nextAckId++;
+    int id = nsp.nextAckId();
     Completer<List<Object?>> completer = Completer<List<Object?>>();
     _acks[id] = completer;
     sendPacket(
@@ -164,9 +174,11 @@ class Socket {
   }
 
   /// Joins [room].
+  @override
   void join(String room) => _adapter.addAll(nsp, id, <String>{room});
 
   /// Leaves [room].
+  @override
   void leave(String room) => _adapter.del(nsp, id, room);
 
   /// Sends to everyone in [room] except this socket.
@@ -186,6 +198,7 @@ class Socket {
 
   /// Disconnects from this namespace. With [close], the whole connection
   /// is closed.
+  @override
   void disconnect([bool close = false]) {
     if (!_connected) return;
     if (close) {
@@ -240,11 +253,21 @@ class Socket {
       completer.completeError(StateError('socket disconnected: $reason'));
     }
     _acks.clear();
+    _broadcastAcks.clear();
     _emitLocal(disconnectEvent, reason);
   }
 
+  /// Calls [onAck] with the ack arguments when the client answers packet
+  /// [id]. Used for broadcasts with an ack.
+  void waitForAck(int id, void Function(List<Object?> args) onAck) {
+    _broadcastAcks[id] = onAck;
+  }
+
   /// Removes a waiting ack after a timeout.
-  void dropAck(int id) => _acks.remove(id);
+  void dropAck(int id) {
+    _acks.remove(id);
+    _broadcastAcks.remove(id);
+  }
 
   void _onEvent(SocketPacket packet) {
     List<Object?> payload = packet.data! as List<Object?>;
@@ -263,9 +286,10 @@ class Socket {
   }
 
   void _onAck(SocketPacket packet) {
-    Completer<List<Object?>>? completer = _acks.remove(packet.id);
-    Object? args = packet.data;
-    completer?.complete(args is List ? args.cast<Object?>() : <Object?>[]);
+    Object? data = packet.data;
+    List<Object?> args = data is List ? data.cast<Object?>() : <Object?>[];
+    _acks.remove(packet.id)?.complete(args);
+    _broadcastAcks.remove(packet.id)?.call(args);
   }
 
   void _emitLocal(String name, String reason) {

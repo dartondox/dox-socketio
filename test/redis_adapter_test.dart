@@ -40,12 +40,18 @@ String? redisSkipReason() {
   }
 }
 
-RedisAdapter newAdapter([RedisFormat format = RedisFormat.msgpack]) {
+RedisAdapter newAdapter([
+  RedisFormat format = RedisFormat.msgpack,
+  String key = 'socket.io',
+  Duration requestsTimeout = const Duration(seconds: 5),
+]) {
   Redis subscriber = Redis(redisOptions);
   return RedisAdapter(
     subscriber: subscriber,
     publisher: subscriber.duplicate(),
     format: format,
+    key: key,
+    requestsTimeout: requestsTimeout,
   );
 }
 
@@ -91,6 +97,15 @@ Future<Object?> next(sio.Socket socket, String event) {
   Completer<Object?> got = Completer<Object?>();
   socket.once(event, (dynamic data) => got.complete(data));
   return got.future.timeout(Duration(seconds: 5));
+}
+
+/// Answers the ack of each [event] on [socket] with [reply].
+void answer(sio.Socket socket, String event, Object? reply) {
+  socket.on(event, (dynamic data) {
+    // socket_io_client gives the ack function as the last argument.
+    Function ack = data is List ? data.last as Function : data as Function;
+    ack(reply);
+  });
 }
 
 /// Collects the [event]s on [socket].
@@ -260,6 +275,22 @@ void main() {
       b.dispose();
     });
 
+    test('serverSideEmit reaches the server, not clients', () async {
+      sio.Socket a = await connectClient(server.url, '');
+      List<Object?> clientGot = collect(a, 'reload');
+      Completer<List<Object?>> got = Completer<List<Object?>>();
+      server.io.onServerSideEmit('reload', (ServerSideEvent event) {
+        got.complete(event.args);
+      });
+      await emitter.serverSideEmit('reload', <Object?>['config', 2]);
+      expect(await got.future.timeout(Duration(seconds: 5)), <Object?>[
+        'config',
+        2,
+      ]);
+      expect(clientGot, isEmpty);
+      a.dispose();
+    });
+
     test('emits to a namespace', () async {
       sio.Socket main = await connectClient(server.url, '');
       sio.Socket admin = await connectClient(
@@ -323,6 +354,7 @@ void main() {
           await server.start();
           await adapter.ready();
           sio.Socket dartClient = await connectClient(server.url, 'r1');
+          answer(dartClient, 'ack-me', 'dart');
           Future<Object?> fromNode = next(dartClient, 'from-node');
           Future<Object?> fromNodeRoom = next(dartClient, 'from-node-room');
 
@@ -361,11 +393,16 @@ void main() {
       List<Object?> aGot = collect(a, 'news');
       List<Object?> bGot = collect(b, 'news');
       Future<Object?> aGone = next(a, 'disconnect');
+      Completer<Object?> fromEmitter = Completer<Object?>();
+      server.io.onServerSideEmit('from-emitter', (ServerSideEvent event) {
+        fromEmitter.complete(event.data);
+      });
 
       await runNode(node, 'redis-emitter.mjs', <String>[
         'redis://$redisHost:$redisPort',
       ]);
       expect(await aGone, 'io server disconnect');
+      expect(await fromEmitter.future.timeout(Duration(seconds: 5)), 'x');
       expect(aGot, <Object?>[
         'all',
         <String, dynamic>{

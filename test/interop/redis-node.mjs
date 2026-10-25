@@ -4,7 +4,8 @@
 // Usage: node redis-node.mjs <redisUrl> [msgpack|json]
 // Sends `from-node` to all and `from-node-room` to room r1, then prints READY.
 // After it gets `from-dart`, it checks the requests the Dart server answers
-// (fetchSockets, allRooms, emitWithAck), then exits 0.
+// (fetchSockets, allRooms, emitWithAck with an ack from the Dart client),
+// then exits 0.
 import { createServer } from 'node:http';
 import { Server } from 'socket.io';
 import { io as connect } from 'socket.io-client';
@@ -38,8 +39,9 @@ client.on('from-dart', async (data) => {
   if (sockets.length !== 2) fail('fetchSockets gave ' + sockets.length);
   const rooms = await io.of('/').adapter.allRooms();
   if (!rooms.has('r1') || rooms.size < 3) fail('allRooms gave ' + [...rooms]);
+  // The Dart client in r1 answers too.
   const acks = await io.to('r1').timeout(2000).emitWithAck('ack-me');
-  if (JSON.stringify(acks) !== '["node"]') fail('acks ' + JSON.stringify(acks));
+  if (JSON.stringify(acks.sort()) !== '["dart","node"]') fail('acks ' + JSON.stringify(acks));
   clearTimeout(timer);
   client.close();
   io.close();

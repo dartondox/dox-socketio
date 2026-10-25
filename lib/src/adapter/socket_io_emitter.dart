@@ -15,6 +15,7 @@ import 'redis_adapter.dart';
 /// SocketIoEmitter emitter = SocketIoEmitter(Redis(RedisOptions()));
 /// await emitter.to('room1').emit('news', {'title': 'hi'});
 /// await emitter.of('/admin').socketsJoin('vip');
+/// await emitter.serverSideEmit('reload', ['config']);
 /// ```
 class SocketIoEmitter extends SocketIoEmitterOperator {
   /// Publishes with [redis]. Do not use a connection in subscribe mode.
@@ -126,13 +127,20 @@ class SocketIoEmitterOperator {
     });
   }
 
-  /// Sends [args] to the other Socket.IO servers (Node.js
-  /// `io.on('event', ...)` gets them). Dox servers ignore it.
-  Future<void> serverSideEmit(List<Object?> args) {
+  /// Sends [event] to all Socket.IO servers of this namespace, not to
+  /// clients. Dox servers get it with `onServerSideEmit`, Node.js servers
+  /// with `io.on(event)`. No ack, like in Node.js.
+  Future<void> serverSideEmit(
+    String event, [
+    List<Object?> args = const <Object?>[],
+  ]) {
+    if (reservedEvents.contains(event)) {
+      throw ArgumentError.value(event, 'event', 'is a reserved event name');
+    }
     return _request(<String, Object?>{
       'uid': emitterUid,
       'type': RedisRequestType.serverSideEmit,
-      'data': args,
+      'data': <Object?>[event, ...args],
     });
   }
 

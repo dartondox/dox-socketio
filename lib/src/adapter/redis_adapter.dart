@@ -7,8 +7,8 @@ import 'package:ioredis/ioredis.dart';
 
 import '../constants/socket_constants.dart';
 import '../parser/socket_packet.dart';
-import '../server/broadcast_operator.dart';
 import '../server/namespace.dart';
+import '../server/remote_socket.dart';
 import '../server/socket.dart';
 import '../utils/id_generator.dart';
 import 'adapter.dart';
@@ -86,6 +86,7 @@ class RedisRequestType {
   static const int serverSideEmit = 6;
   static const int broadcast = 7;
   static const int broadcastClientCount = 8;
+  static const int broadcastAck = 9;
 }
 
 /// Shares broadcasts between servers with Redis pub/sub.
@@ -101,8 +102,14 @@ class RedisRequestType {
 ///   `socket.io#<namespace>#`, or `socket.io#<namespace>#<room>#` when
 ///   there is exactly one room. It listens to both with PSUBSCRIBE.
 /// - Requests (`socketsJoin`, `socketsLeave`, `disconnectSockets`,
-///   `fetchSockets`, ...) on `socket.io-request#<namespace>#`. Answers go
-///   to `socket.io-response#<namespace>#`.
+///   `fetchSockets`, `serverSideEmit`, broadcasts with an ack) on
+///   `socket.io-request#<namespace>#`. Answers go to
+///   `socket.io-response#<namespace>#`.
+///
+/// A request that waits for answers (`fetchSockets`,
+/// `serverSideEmitWithAck`) first asks Redis how many servers listen
+/// (`PUBSUB NUMSUB` on the request channel). It waits for that many
+/// answers, for at most [requestsTimeout].
 ///
 /// It reads msgpack and JSON. It writes [format].
 class RedisAdapter extends InMemoryAdapter {
@@ -111,8 +118,11 @@ class RedisAdapter extends InMemoryAdapter {
     required this.subscriber,
     this.key = defaultRedisKey,
     this.format = RedisFormat.msgpack,
+    this.requestsTimeout = const Duration(milliseconds: 5000),
+    this.publishOnSpecificResponseChannel = false,
     IdGenerator? ids,
-  }) : uid = (ids ?? IdGenerator()).next();
+  }) : _ids = ids ?? IdGenerator(),
+       uid = (ids ?? IdGenerator()).next();
 
   /// Connection used to publish. Do not use it for subscribe.
   final Redis publisher;
@@ -126,11 +136,23 @@ class RedisAdapter extends InMemoryAdapter {
   /// Format of the messages this server publishes.
   final RedisFormat format;
 
+  /// How long a request waits for the answers of the other servers.
+  /// Same default as Node.js (5 seconds).
+  final Duration requestsTimeout;
+
+  /// Send answers to `socket.io-response#<namespace>#<uid>#`, the channel
+  /// of the server that asked, instead of the shared response channel.
+  /// Same as the Node.js option. It always listens on both.
+  final bool publishOnSpecificResponseChannel;
+
   /// Id of this server. Messages with this id are ignored.
   final String uid;
 
+  final IdGenerator _ids;
   final Map<String, Namespace> _namespaces = <String, Namespace>{};
   final List<Future<void>> _subscribing = <Future<void>>[];
+  final Map<String, _Request> _requests = <String, _Request>{};
+  final Map<String, _AckRequest> _ackRequests = <String, _AckRequest>{};
 
   /// Completes when all namespace channels are subscribed.
   Future<void> ready() => Future.wait(_subscribing);
@@ -144,6 +166,10 @@ class RedisAdapter extends InMemoryAdapter {
   /// Response channel of [nsp].
   String responseChannelOf(Namespace nsp) => '$key-response#${nsp.name}#';
 
+  /// Response channel of [nsp] for this server only.
+  String specificResponseChannelOf(Namespace nsp) =>
+      '${responseChannelOf(nsp)}$uid#';
+
   @override
   void init(Namespace nsp) {
     super.init(nsp);
@@ -153,14 +179,20 @@ class RedisAdapter extends InMemoryAdapter {
 
   Future<void> _subscribe(Namespace nsp) async {
     RedisSubscriber broadcasts = await subscriber.psubscribe(
-      '${_escapeGlob(channelOf(nsp))}*',
+      _broadcastPattern(nsp),
     );
     broadcasts.onPatternMessageBytes = onRedisMessage;
-    RedisSubscriber requests = await subscriber.subscribe(
-      requestChannelOf(nsp),
-    );
+    RedisSubscriber requests = await subscriber.subscribe(_channels(nsp));
     requests.onMessageBytes = _onRequestMessage;
   }
+
+  String _broadcastPattern(Namespace nsp) => '${_escapeGlob(channelOf(nsp))}*';
+
+  List<String> _channels(Namespace nsp) => <String>[
+    requestChannelOf(nsp),
+    responseChannelOf(nsp),
+    specificResponseChannelOf(nsp),
+  ];
 
   void _onRequestMessage(String channel, Uint8List message) =>
       onRedisMessage(null, channel, message);
@@ -188,6 +220,201 @@ class RedisAdapter extends InMemoryAdapter {
     await super.broadcast(nsp, packet, options);
   }
 
+  @override
+  Future<void> broadcastWithAck(
+    Namespace nsp,
+    SocketPacket packet,
+    BroadcastOptions options,
+    void Function(int clientCount) onClientCount,
+    void Function(Object? response) onAck,
+  ) async {
+    if (!options.local) {
+      String requestId = _ids.next();
+      // The other servers wait for acks with their own packet ids.
+      Map<String, Object?> raw = packet.toJson()..remove('id');
+      _ackRequests[requestId] = _AckRequest(onClientCount, onAck);
+      // There is no way to know when all acks came, so forget the request
+      // after the timeout, like Node.js.
+      Timer(options.timeout ?? requestsTimeout, () {
+        _ackRequests.remove(requestId);
+      });
+      await _publish(
+        requestChannelOf(nsp),
+        format.encode(<String, Object?>{
+          'uid': uid,
+          'requestId': requestId,
+          'type': RedisRequestType.broadcast,
+          'packet': raw,
+          'opts': options.toJson(),
+        }),
+      );
+    }
+    await super.broadcastWithAck(nsp, packet, options, onClientCount, onAck);
+  }
+
+  @override
+  Future<int> serverCount(Namespace nsp) async {
+    Object? reply = await publisher.sendCommand(<String>[
+      'PUBSUB',
+      'NUMSUB',
+      requestChannelOf(nsp),
+    ]);
+    if (reply is List && reply.length >= 2) {
+      return int.tryParse(reply[1].toString()) ?? 1;
+    }
+    return 1;
+  }
+
+  @override
+  Future<List<RemoteSocket>> fetchSockets(
+    Namespace nsp,
+    BroadcastOptions options,
+  ) async {
+    List<RemoteSocket> sockets = <RemoteSocket>[...localSockets(nsp, options)];
+    if (options.local) return sockets;
+    int numSub = await serverCount(nsp);
+    if (numSub <= 1) return sockets;
+    List<Object?> remote = await _ask(
+      nsp,
+      RedisRequestType.remoteFetch,
+      numSub,
+      <String, Object?>{'opts': _opts(options)},
+      'timeout reached while waiting for fetchSockets response',
+    );
+    for (Object? socket in remote) {
+      if (socket is Map<String, dynamic>) {
+        sockets.add(RemoteSocket.fromJson(nsp, socket));
+      }
+    }
+    return sockets;
+  }
+
+  @override
+  Future<void> addSockets(
+    Namespace nsp,
+    BroadcastOptions options,
+    Set<String> rooms,
+  ) async {
+    await super.addSockets(nsp, options, rooms);
+    if (options.local) return;
+    await _send(nsp, <String, Object?>{
+      'uid': uid,
+      'type': RedisRequestType.remoteJoin,
+      'opts': _opts(options),
+      'rooms': rooms.toList(),
+    });
+  }
+
+  @override
+  Future<void> delSockets(
+    Namespace nsp,
+    BroadcastOptions options,
+    Set<String> rooms,
+  ) async {
+    await super.delSockets(nsp, options, rooms);
+    if (options.local) return;
+    await _send(nsp, <String, Object?>{
+      'uid': uid,
+      'type': RedisRequestType.remoteLeave,
+      'opts': _opts(options),
+      'rooms': rooms.toList(),
+    });
+  }
+
+  @override
+  Future<void> disconnectSockets(
+    Namespace nsp,
+    BroadcastOptions options,
+    bool close,
+  ) async {
+    await super.disconnectSockets(nsp, options, close);
+    if (options.local) return;
+    await _send(nsp, <String, Object?>{
+      'uid': uid,
+      'type': RedisRequestType.remoteDisconnect,
+      'opts': _opts(options),
+      'close': close,
+    });
+  }
+
+  @override
+  Future<void> serverSideEmit(Namespace nsp, List<Object?> args) {
+    return _send(nsp, <String, Object?>{
+      'uid': uid,
+      'type': RedisRequestType.serverSideEmit,
+      'data': args,
+    });
+  }
+
+  @override
+  Future<List<Object?>> serverSideEmitWithAck(
+    Namespace nsp,
+    List<Object?> args,
+  ) async {
+    int numSub = await serverCount(nsp) - 1; // not this server
+    if (numSub <= 0) return <Object?>[];
+    return _ask(nsp, RedisRequestType.serverSideEmit, numSub, <String, Object?>{
+      'data': args,
+    }, null);
+  }
+
+  /// Sends a request and waits for the answers.
+  ///
+  /// For `fetchSockets`, [numSub] counts this server too, so it waits for
+  /// `numSub - 1` answers, like Node.js. On timeout it throws a
+  /// [TimeoutException] with [timeoutMessage]. For `serverSideEmit` it
+  /// throws an [AckTimeoutException] with the answers so far.
+  Future<List<Object?>> _ask(
+    Namespace nsp,
+    int type,
+    int numSub,
+    Map<String, Object?> fields,
+    String? timeoutMessage,
+  ) async {
+    String requestId = _ids.next();
+    _Request request = _Request(type, numSub);
+    request.timer = Timer(requestsTimeout, () {
+      if (_requests.remove(requestId) == null) return;
+      request.done.completeError(
+        timeoutMessage == null
+            ? AckTimeoutException(
+                'timeout reached: only ${request.items.length} responses '
+                'received out of ${request.numSub}',
+                List<Object?>.of(request.items),
+              )
+            : TimeoutException(timeoutMessage, requestsTimeout),
+      );
+    });
+    _requests[requestId] = request;
+    try {
+      await publisher.publish(
+        requestChannelOf(nsp),
+        RedisFormat.json.encode(<String, Object?>{
+          'uid': uid,
+          'requestId': requestId,
+          'type': type,
+          ...fields,
+        }),
+      );
+    } catch (error) {
+      _requests.remove(requestId);
+      request.timer?.cancel();
+      rethrow;
+    }
+    return request.done.future;
+  }
+
+  /// Requests that need no answer are JSON, like in Node.js.
+  Future<void> _send(Namespace nsp, Map<String, Object?> request) =>
+      _publish(requestChannelOf(nsp), RedisFormat.json.encode(request));
+
+  static Map<String, Object> _opts(BroadcastOptions options) {
+    return <String, Object>{
+      'rooms': options.rooms.toList(),
+      'except': options.except.toList(),
+    };
+  }
+
   Future<void> _publish(String channel, Uint8List message) async {
     try {
       await publisher.publish(channel, message);
@@ -196,7 +423,7 @@ class RedisAdapter extends InMemoryAdapter {
     }
   }
 
-  /// Handles a message from Redis: a broadcast or a request.
+  /// Handles a message from Redis: a broadcast, a request or a response.
   void onRedisMessage(String? pattern, String channel, Uint8List message) {
     try {
       for (Namespace nsp in _namespaces.values) {
@@ -206,6 +433,10 @@ class RedisAdapter extends InMemoryAdapter {
         }
         if (channel == requestChannelOf(nsp)) {
           _onRequest(nsp, RedisFormat.decode(message));
+          return;
+        }
+        if (channel.startsWith(responseChannelOf(nsp))) {
+          _onResponse(RedisFormat.decode(message));
           return;
         }
       }
@@ -230,80 +461,197 @@ class RedisAdapter extends InMemoryAdapter {
   void _onRequest(Namespace nsp, Object? decoded) {
     Map<String, dynamic> request = decoded as Map<String, dynamic>;
     if (request['uid'] == uid) return;
-    BroadcastOperator target = _target(nsp, request['opts']);
+    BroadcastOptions options = _options(request['opts']);
     switch (request['type']) {
       case RedisRequestType.remoteJoin:
-        for (String room in _rooms(request)) {
-          target.socketsJoin(room);
+        if (request['opts'] == null) {
+          _onSocketRequest(nsp, request, (Socket socket) {
+            socket.join(request['room'].toString());
+          });
+        } else {
+          unawaited(super.addSockets(nsp, options, _rooms(request)));
         }
       case RedisRequestType.remoteLeave:
-        for (String room in _rooms(request)) {
-          target.socketsLeave(room);
+        if (request['opts'] == null) {
+          _onSocketRequest(nsp, request, (Socket socket) {
+            socket.leave(request['room'].toString());
+          });
+        } else {
+          unawaited(super.delSockets(nsp, options, _rooms(request)));
         }
       case RedisRequestType.remoteDisconnect:
+        bool close = request['close'] == true;
         if (request['opts'] == null) {
-          nsp.sockets[request['sid']]?.disconnect(request['close'] == true);
+          _onSocketRequest(nsp, request, (Socket socket) {
+            socket.disconnect(close);
+          });
         } else {
-          target.disconnectSockets(request['close'] == true);
+          unawaited(super.disconnectSockets(nsp, options, close));
         }
       case RedisRequestType.sockets:
         BroadcastOptions options = BroadcastOptions.fromJson(<String, dynamic>{
           'rooms': request['rooms'],
         });
-        _respond(nsp, <String, Object?>{
+        _respond(nsp, request, <String, Object?>{
           'requestId': request['requestId'],
           'sockets': socketIds(nsp, options).toList(),
         });
       case RedisRequestType.allRooms:
-        _respond(nsp, <String, Object?>{
+        _respond(nsp, request, <String, Object?>{
           'requestId': request['requestId'],
           'rooms': rooms(nsp).toList(),
         });
       case RedisRequestType.remoteFetch:
-        _respond(nsp, <String, Object?>{
+        _respond(nsp, request, <String, Object?>{
           'requestId': request['requestId'],
-          'sockets': target.fetchSockets().map(_socketJson).toList(),
+          'sockets': localSockets(nsp, options).map(_socketJson).toList(),
         });
+      case RedisRequestType.serverSideEmit:
+        _onServerSideEmit(nsp, request);
       case RedisRequestType.broadcast:
-        // ponytail: acks from our clients are not sent back. Our clients
-        // get the event, and we answer "0 clients" so the sender does not
-        // wait for them.
-        Map<String, dynamic> raw = Map<String, dynamic>.of(
-          request['packet'] as Map<String, dynamic>,
-        )..remove('id');
-        unawaited(
-          super.broadcast(
-            nsp,
-            SocketPacket.fromJson(raw),
-            BroadcastOptions.fromJson(request['opts'] as Map<String, dynamic>),
-          ),
-        );
-        _respond(nsp, <String, Object?>{
-          'type': RedisRequestType.broadcastClientCount,
-          'requestId': request['requestId'],
-          'clientCount': 0,
-        });
-      // ponytail: serverSideEmit is ignored; Dox has no server-side events.
+        _onBroadcastWithAck(nsp, request);
     }
   }
 
+  /// A request for one socket, by `sid`. Node.js answers it with only the
+  /// `requestId`.
+  void _onSocketRequest(
+    Namespace nsp,
+    Map<String, dynamic> request,
+    void Function(Socket socket) action,
+  ) {
+    Socket? socket = nsp.sockets[request['sid']];
+    if (socket == null) return;
+    action(socket);
+    _respond(nsp, request, <String, Object?>{
+      'requestId': request['requestId'],
+    });
+  }
+
+  void _onServerSideEmit(Namespace nsp, Map<String, dynamic> request) {
+    Object? data = request['data'];
+    if (data is! List) return;
+    Object? requestId = request['requestId'];
+    if (requestId == null) {
+      nsp.onServerSideMessage(data.cast<Object?>());
+      return;
+    }
+    // Node.js always sends this answer on the shared response channel.
+    nsp.onServerSideMessage(data.cast<Object?>(), (Object? answer) {
+      unawaited(
+        _publish(
+          responseChannelOf(nsp),
+          RedisFormat.json.encode(<String, Object?>{
+            'type': RedisRequestType.serverSideEmit,
+            'requestId': requestId,
+            'data': answer,
+          }),
+        ),
+      );
+    });
+  }
+
+  /// A broadcast with an ack from another server. We send the number of
+  /// our clients that got it, then each ack.
+  void _onBroadcastWithAck(Namespace nsp, Map<String, dynamic> request) {
+    Map<String, dynamic> raw = Map<String, dynamic>.of(
+      request['packet'] as Map<String, dynamic>,
+    );
+    SocketPacket received = SocketPacket.fromJson(raw);
+    SocketPacket packet = SocketPacket(
+      type: received.type,
+      nsp: nsp.name,
+      data: received.data,
+      id: nsp.nextAckId(),
+    );
+    BroadcastOptions options = _options(request['opts']);
+    Object? requestId = request['requestId'];
+    void onClientCount(int count) {
+      _respond(nsp, request, <String, Object?>{
+        'type': RedisRequestType.broadcastClientCount,
+        'requestId': requestId,
+        'clientCount': count,
+      });
+    }
+
+    void onAck(Object? response) {
+      // Node.js writes this answer with its parser, so binary data works.
+      _respondBytes(
+        nsp,
+        request,
+        format.encode(<String, Object?>{
+          'type': RedisRequestType.broadcastAck,
+          'requestId': requestId,
+          'packet': response,
+        }),
+      );
+    }
+
+    unawaited(
+      super.broadcastWithAck(nsp, packet, options, onClientCount, onAck),
+    );
+    // The sender stops waiting after its timeout. Do the same, so the
+    // waiting acks do not stay in memory.
+    Duration? timeout = options.timeout;
+    if (timeout != null) {
+      Timer(timeout, () {
+        for (Socket socket in nsp.sockets.values) {
+          socket.dropAck(packet.id!);
+        }
+      });
+    }
+  }
+
+  void _onResponse(Object? decoded) {
+    if (decoded is! Map) return;
+    Object? requestId = decoded['requestId'];
+    _AckRequest? ackRequest = _ackRequests[requestId];
+    if (ackRequest != null) {
+      switch (decoded['type']) {
+        case RedisRequestType.broadcastClientCount:
+          Object? count = decoded['clientCount'];
+          ackRequest.onClientCount(count is num ? count.toInt() : 0);
+        case RedisRequestType.broadcastAck:
+          ackRequest.onAck(decoded['packet']);
+      }
+      return;
+    }
+    _Request? request = _requests[requestId];
+    if (request == null) return;
+    switch (request.type) {
+      case RedisRequestType.remoteFetch:
+        request.msgCount++;
+        Object? sockets = decoded['sockets'];
+        if (sockets is! List) return;
+        request.items.addAll(sockets);
+        if (request.msgCount == request.numSub) _finish(requestId, request);
+      case RedisRequestType.serverSideEmit:
+        request.items.add(decoded['data']);
+        if (request.items.length == request.numSub) {
+          _finish(requestId, request);
+        }
+    }
+  }
+
+  void _finish(Object? requestId, _Request request) {
+    _requests.remove(requestId);
+    request.timer?.cancel();
+    request.done.complete(request.items);
+  }
+
   /// The sockets a request is for: `opts.rooms` minus `opts.except`.
-  BroadcastOperator _target(Namespace nsp, Object? opts) {
+  /// The request comes from another server, so it acts on this one only.
+  static BroadcastOptions _options(Object? opts) {
     BroadcastOptions options = opts is Map<String, dynamic>
         ? BroadcastOptions.fromJson(opts)
         : const BroadcastOptions();
-    return BroadcastOperator(
-      nsp,
-      rooms: options.rooms,
-      except: options.except,
-      local: true,
-    );
+    return options.copyWith(local: true);
   }
 
-  static List<String> _rooms(Map<String, dynamic> request) {
+  static Set<String> _rooms(Map<String, dynamic> request) {
     Object? rooms = request['rooms'] ?? request['room'];
-    if (rooms is List) return rooms.map(_toString).toList();
-    return rooms == null ? const <String>[] : <String>[rooms.toString()];
+    if (rooms is List) return rooms.map(_toString).toSet();
+    return rooms == null ? const <String>{} : <String>{rooms.toString()};
   }
 
   static String _toString(Object? value) => value.toString();
@@ -329,9 +677,68 @@ class RedisAdapter extends InMemoryAdapter {
   }
 
   /// Answers are JSON, like in the Node.js adapter.
-  void _respond(Namespace nsp, Map<String, Object?> response) {
-    unawaited(
-      _publish(responseChannelOf(nsp), RedisFormat.json.encode(response)),
-    );
+  void _respond(
+    Namespace nsp,
+    Map<String, dynamic> request,
+    Map<String, Object?> response,
+  ) {
+    _respondBytes(nsp, request, RedisFormat.json.encode(response));
   }
+
+  void _respondBytes(
+    Namespace nsp,
+    Map<String, dynamic> request,
+    Uint8List response,
+  ) {
+    String channel = publishOnSpecificResponseChannel
+        ? '${responseChannelOf(nsp)}${request['uid']}#'
+        : responseChannelOf(nsp);
+    unawaited(_publish(channel, response));
+  }
+
+  /// Stops listening on Redis and fails the requests that still wait.
+  /// It does not close the Redis connections; they are yours.
+  @override
+  Future<void> close() async {
+    for (_Request request in _requests.values) {
+      request.timer?.cancel();
+      request.done.completeError(StateError('adapter closed'));
+    }
+    _requests.clear();
+    _ackRequests.clear();
+    try {
+      await ready();
+      for (Namespace nsp in _namespaces.values) {
+        await subscriber.punsubscribe(_broadcastPattern(nsp));
+        await subscriber.unsubscribe(_channels(nsp));
+      }
+    } catch (error) {
+      stderr.writeln('dox_socketio: redis unsubscribe failed: $error');
+    }
+    await super.close();
+  }
+}
+
+/// A request that waits for answers from other servers.
+class _Request {
+  _Request(this.type, this.numSub);
+
+  final int type;
+  final int numSub;
+  final Completer<List<Object?>> done = Completer<List<Object?>>();
+
+  /// Sockets or answers so far.
+  final List<Object?> items = <Object?>[];
+
+  /// Answers so far, this server included (for `fetchSockets`).
+  int msgCount = 1;
+  Timer? timer;
+}
+
+/// A broadcast with an ack that waits for other servers.
+class _AckRequest {
+  _AckRequest(this.onClientCount, this.onAck);
+
+  final void Function(int clientCount) onClientCount;
+  final void Function(Object? response) onAck;
 }

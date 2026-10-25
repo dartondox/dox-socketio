@@ -2,10 +2,14 @@ import '../engine/engine_packet.dart';
 import '../parser/socket_encoder.dart';
 import '../parser/socket_packet.dart';
 import '../server/namespace.dart';
+import '../server/remote_socket.dart';
 import '../server/socket.dart';
 import 'adapter.dart';
 
 /// Default adapter. Rooms live in memory of this server only.
+///
+/// All methods act on this server only. [serverSideEmit] sends nothing,
+/// because there are no other servers.
 class InMemoryAdapter implements Adapter {
   InMemoryAdapter({this._encoder = const SocketEncoder()});
 
@@ -57,6 +61,89 @@ class InMemoryAdapter implements Adapter {
       }
     }
   }
+
+  @override
+  Future<void> broadcastWithAck(
+    Namespace nsp,
+    SocketPacket packet,
+    BroadcastOptions options,
+    void Function(int clientCount) onClientCount,
+    void Function(Object? response) onAck,
+  ) async {
+    int id = packet.id!;
+    List<Object> encoded = _encoder.encode(packet);
+    encoded[0] = SharedText(encoded[0] as String);
+    int count = 0;
+    void onArgs(List<Object?> args) => onAck(args.isEmpty ? null : args.first);
+    for (String sid in _store(nsp).members(options.rooms, options.except)) {
+      Socket? socket = nsp.sockets[sid];
+      if (socket != null && socket.connected) {
+        count++;
+        socket.waitForAck(id, onArgs);
+        socket.client.writeEncoded(encoded);
+      }
+    }
+    onClientCount(count);
+  }
+
+  @override
+  Future<int> serverCount(Namespace nsp) async => 1;
+
+  @override
+  Future<List<RemoteSocket>> fetchSockets(
+    Namespace nsp,
+    BroadcastOptions options,
+  ) async => localSockets(nsp, options);
+
+  /// Sockets of this server that match [options].
+  List<Socket> localSockets(Namespace nsp, BroadcastOptions options) {
+    return <Socket>[
+      for (String id in socketIds(nsp, options))
+        if (nsp.sockets[id] != null) nsp.sockets[id]!,
+    ];
+  }
+
+  @override
+  Future<void> addSockets(
+    Namespace nsp,
+    BroadcastOptions options,
+    Set<String> rooms,
+  ) async {
+    for (Socket socket in localSockets(nsp, options)) {
+      rooms.forEach(socket.join);
+    }
+  }
+
+  @override
+  Future<void> delSockets(
+    Namespace nsp,
+    BroadcastOptions options,
+    Set<String> rooms,
+  ) async {
+    for (Socket socket in localSockets(nsp, options)) {
+      rooms.forEach(socket.leave);
+    }
+  }
+
+  @override
+  Future<void> disconnectSockets(
+    Namespace nsp,
+    BroadcastOptions options,
+    bool close,
+  ) async {
+    for (Socket socket in localSockets(nsp, options)) {
+      socket.disconnect(close);
+    }
+  }
+
+  @override
+  Future<void> serverSideEmit(Namespace nsp, List<Object?> args) async {}
+
+  @override
+  Future<List<Object?>> serverSideEmitWithAck(
+    Namespace nsp,
+    List<Object?> args,
+  ) async => <Object?>[];
 
   @override
   Future<void> close() async {}
