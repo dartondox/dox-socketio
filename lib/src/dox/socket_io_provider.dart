@@ -8,19 +8,19 @@ import 'socket_io_config.dart';
 /// Mounts Socket.IO on the Dox HTTP port, in every isolate. Extend it in
 /// `lib/` so the generated container finds it:
 /// ```
-/// class AppSocketIoService extends SocketIoService {
-///   AppSocketIoService() : super(socketIoConfig);
+/// class AppSocketIoProvider extends SocketIoProvider {
+///   AppSocketIoProvider() : super(socketIoConfig);
 /// }
 /// ```
 /// Socket.IO gets the raw requests of its path, before the router.
-class SocketIoService implements DoxService {
-  SocketIoService(this.config);
+class SocketIoProvider extends DoxProvider {
+  SocketIoProvider(this.config);
 
   final SocketIoConfig config;
 
-  /// The Socket.IO server of this isolate, after the service started.
+  /// The Socket.IO server of this isolate, after the provider started.
   /// ```
-  /// SocketIoService.server?.to('room').emit('news', data);
+  /// SocketIoProvider.server?.to('room').emit('news', data);
   /// ```
   static SocketIoServer? server;
 

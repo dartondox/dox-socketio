@@ -30,8 +30,8 @@ AppConfig config = AppConfig(
   serverPort: 0,
   totalIsolate: 1,
   routers: <Router>[PingRouter()],
-  services: <DoxService>[
-    SocketIoService(
+  providers: <DoxProvider>[
+    SocketIoProvider(
       SocketIoConfig(
         options: ServerOptions(
           pingInterval: Duration(milliseconds: 300),
@@ -72,7 +72,7 @@ void main() {
   });
 
   tearDownAll(() async {
-    await SocketIoService.server?.close();
+    await SocketIoProvider.server?.close();
     await Dox().server.close(force: true);
   });
 
@@ -90,7 +90,7 @@ void main() {
   }
 
   test('socket.io is mounted on the dox port', () {
-    expect(SocketIoService.server, isNotNull);
+    expect(SocketIoProvider.server, isNotNull);
     expect(Route().mounts.keys, contains('/socket.io/'));
   });
 

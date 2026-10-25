@@ -2,7 +2,7 @@ import '../adapter/adapter.dart';
 import '../engine/server_options.dart';
 import '../server/namespace.dart';
 
-/// Socket.IO on the Dox HTTP port, at `/socket.io/`. `SocketIoService`
+/// Socket.IO on the Dox HTTP port, at `/socket.io/`. `SocketIoProvider`
 /// uses it.
 ///
 /// ```
