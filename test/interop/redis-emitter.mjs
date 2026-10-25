@@ -2,7 +2,8 @@
 // (msgpack, the default).
 // Usage: node redis-emitter.mjs <redisUrl>
 // Room r1 gets: 'all', {bin: Buffer[1,2,3]}, 'joined', then a disconnect.
-// Room r2 gets only 'all'.
+// Room r2 gets only 'all'. The server gets `from-emitter` ('x') with
+// serverSideEmit.
 import { Emitter } from '@socket.io/redis-emitter';
 import { createClient } from 'redis';
 
@@ -16,5 +17,6 @@ emitter.to('r1').emit('news', { bin: Buffer.from([1, 2, 3]) });
 emitter.to('r1').socketsJoin('joined');
 emitter.to('joined').emit('news', 'joined');
 emitter.to('joined').disconnectSockets();
+emitter.serverSideEmit('from-emitter', 'x');
 await client.quit();
 console.log('SENT');

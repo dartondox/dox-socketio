@@ -9,6 +9,7 @@ import 'broadcast_operator.dart';
 import 'client.dart';
 import 'handler_runner.dart';
 import 'handshake.dart';
+import 'remote_socket.dart';
 import 'socket.dart';
 import 'socket_io_exception.dart';
 
@@ -17,6 +18,36 @@ typedef ConnectionHandler = FutureOr<void> Function(Socket socket);
 
 /// Runs before a socket connects. Throw [SocketIoException] to refuse it.
 typedef Middleware = FutureOr<void> Function(Socket socket);
+
+/// Handles an event from another server (see [Namespace.serverSideEmit]).
+typedef ServerSideEventHandler = FutureOr<void> Function(ServerSideEvent event);
+
+/// An event that another server sent with `serverSideEmit`.
+class ServerSideEvent {
+  ServerSideEvent({required this.name, required this.args, this._ack});
+
+  /// Event name.
+  final String name;
+
+  /// All arguments the other server sent.
+  final List<Object?> args;
+
+  void Function(Object? data)? _ack;
+
+  /// First argument, or null when there is none.
+  Object? get data => args.isEmpty ? null : args.first;
+
+  /// True when the other server waits for an answer.
+  bool get hasAck => _ack != null;
+
+  /// Answers the other server. Only the first call is sent. Like in
+  /// Node.js, the answer is one value and it must be JSON.
+  void ack([Object? data]) {
+    void Function(Object? data)? ack = _ack;
+    _ack = null;
+    ack?.call(data);
+  }
+}
 
 /// A class-based namespace. Register it with `io.register(handler)`.
 ///
@@ -66,6 +97,13 @@ class Namespace {
   final HandlerRunner _runner;
   final List<Middleware> _middleware = <Middleware>[];
   final List<ConnectionHandler> _connectionHandlers = <ConnectionHandler>[];
+  final Map<String, List<ServerSideEventHandler>> _serverSideHandlers =
+      <String, List<ServerSideEventHandler>>{};
+  int _nextAckId = 0;
+
+  /// A new ack id. Sockets and broadcasts of this namespace share the
+  /// counter, so a broadcast can use the same id for every socket.
+  int nextAckId() => _nextAckId++;
 
   /// Adds a middleware. Middlewares run in the order they are added.
   void use(Middleware middleware) => _middleware.add(middleware);
@@ -92,6 +130,10 @@ class Namespace {
   /// Sends only to sockets of this server.
   BroadcastOperator get local => BroadcastOperator(this, local: true);
 
+  /// Sets how long `emitWithAck` waits for the acks.
+  BroadcastOperator timeout(Duration timeout) =>
+      BroadcastOperator(this).timeout(timeout);
+
   /// Sends [event] to all sockets of this namespace.
   Future<void> emit(String event, [Object? data]) =>
       BroadcastOperator(this).emit(event, data);
@@ -100,12 +142,89 @@ class Namespace {
   Future<void> emitArgs(String event, List<Object?> args) =>
       BroadcastOperator(this).emitArgs(event, args);
 
-  /// All sockets of this namespace on this server.
-  List<Socket> fetchSockets() => BroadcastOperator(this).fetchSockets();
+  /// All sockets of this namespace, on all servers.
+  Future<List<RemoteSocket>> fetchSockets() =>
+      BroadcastOperator(this).fetchSockets();
 
-  /// Disconnects all sockets of this namespace on this server.
-  void disconnectSockets([bool close = false]) =>
+  /// Makes all sockets of this namespace, on all servers, join [room].
+  Future<void> socketsJoin(String room) =>
+      BroadcastOperator(this).socketsJoin(room);
+
+  /// Makes all sockets of this namespace, on all servers, leave [room].
+  Future<void> socketsLeave(String room) =>
+      BroadcastOperator(this).socketsLeave(room);
+
+  /// Disconnects all sockets of this namespace, on all servers.
+  Future<void> disconnectSockets([bool close = false]) =>
       BroadcastOperator(this).disconnectSockets(close);
+
+  /// Sends [event] to the other servers. Clients do not get it. The other
+  /// servers get it with [onServerSideEmit] (Node.js: `io.on(event)`).
+  /// The arguments must be JSON.
+  Future<void> serverSideEmit(
+    String event, [
+    List<Object?> args = const <Object?>[],
+  ]) {
+    _checkEventName(event);
+    return adapter.serverSideEmit(this, <Object?>[event, ...args]);
+  }
+
+  /// Like [serverSideEmit], and waits for one answer from each other
+  /// server. Returns the answers.
+  ///
+  /// When not all servers answer in time (`requestsTimeout` of the Redis
+  /// adapter), it throws [AckTimeoutException]. Its `responses` holds the
+  /// answers that came back.
+  Future<List<Object?>> serverSideEmitWithAck(
+    String event, [
+    List<Object?> args = const <Object?>[],
+  ]) {
+    _checkEventName(event);
+    return adapter.serverSideEmitWithAck(this, <Object?>[event, ...args]);
+  }
+
+  /// Listens for [event] sent by another server with `serverSideEmit`.
+  void onServerSideEmit(String event, ServerSideEventHandler handler) {
+    _serverSideHandlers.putIfAbsent(event, _newHandlerList).add(handler);
+  }
+
+  /// Stops listening. Without [handler], all handlers of [event] go.
+  void offServerSideEmit(String event, [ServerSideEventHandler? handler]) {
+    if (handler == null) {
+      _serverSideHandlers.remove(event);
+    } else {
+      _serverSideHandlers[event]?.remove(handler);
+    }
+  }
+
+  /// Called by the adapter with `[event, ...args]` from another server.
+  /// [ack] is set when that server waits for an answer.
+  void onServerSideMessage(
+    List<Object?> message, [
+    void Function(Object? data)? ack,
+  ]) {
+    if (message.isEmpty) return;
+    String name = message.first.toString();
+    ServerSideEvent event = ServerSideEvent(
+      name: name,
+      args: message.sublist(1),
+      ack: ack,
+    );
+    for (ServerSideEventHandler handler in List<ServerSideEventHandler>.of(
+      _serverSideHandlers[name] ?? const <ServerSideEventHandler>[],
+    )) {
+      unawaited(_runner.run(handler, event));
+    }
+  }
+
+  void _checkEventName(String event) {
+    if (reservedEvents.contains(event)) {
+      throw ArgumentError.value(event, 'event', 'is a reserved event name');
+    }
+  }
+
+  static List<ServerSideEventHandler> _newHandlerList() =>
+      <ServerSideEventHandler>[];
 
   /// Runs the middlewares and connects a new socket for [client].
   Future<void> add(Client client, Map<String, dynamic> auth) async {

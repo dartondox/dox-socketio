@@ -21,6 +21,7 @@ export 'src/server/broadcast_operator.dart';
 export 'src/server/client.dart';
 export 'src/server/handshake.dart';
 export 'src/server/namespace.dart';
+export 'src/server/remote_socket.dart';
 export 'src/server/socket.dart';
 export 'src/server/socket_io_exception.dart';
 export 'src/server/socket_io_server.dart';

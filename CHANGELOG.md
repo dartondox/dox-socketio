@@ -1,3 +1,22 @@
+## Unreleased (next alpha)
+
+- The Redis adapter now sends requests to the other servers, like `@socket.io/redis-adapter`. Before, it only answered them. Dox and Node.js servers on one Redis work together, in both directions. Both msgpack and JSON work.
+- Breaking: `fetchSockets()` returns `Future<List<RemoteSocket>>`. It has the sockets of all servers. Sockets of this server are `Socket`s. Before, it returned `List<Socket>` of this server only.
+- Breaking: `socketsJoin`, `socketsLeave` and `disconnectSockets` return `Future<void>` and act on all servers. Before, they returned `void` and acted on this server only.
+- New: `RemoteSocket` with `id`, `handshake`, `rooms`, `data`, `emit`, `emitArgs`, `join`, `leave` and `disconnect`. `Socket` implements it.
+- New: `serverSideEmit(event, args)` and `serverSideEmitWithAck(event, args)` on the server and on namespaces. Listen with `onServerSideEmit(event, handler)`. The handler gets a `ServerSideEvent`; answer with `event.ack(value)`. Clients do not get these events.
+- New: broadcasts with an ack: `io.timeout(Duration(seconds: 5)).emitWithAck('event', data)` and `emitArgsWithAck`. Acks come from clients on all servers. A timeout is needed.
+- Fix: our clients now ack broadcasts from other servers (Node.js or Dox), with the right client count. Before, the server always answered "0 clients".
+- New: `RedisAdapter(requestsTimeout: ...)`, 5 seconds by default, like Node.js. `fetchSockets` throws a `TimeoutException` and `serverSideEmitWithAck` throws an `AckTimeoutException` (with the answers so far) when a server does not answer in time.
+- New: `RedisAdapter(publishOnSpecificResponseChannel: true)`, same as the Node.js option. The adapter now also listens on the response channels.
+- New: `AckTimeoutException`, with the `responses` that came before the timeout.
+- New: `Namespace.socketsJoin`, `socketsLeave` and `timeout`. `SocketIoServer.fetchSockets`, `socketsJoin`, `socketsLeave`, `disconnectSockets` and `timeout`.
+- New: `Handshake.fromJson`, for the handshake of a socket on another server.
+- New: `Adapter` has new methods: `broadcastWithAck`, `serverCount`, `fetchSockets`, `addSockets`, `delSockets`, `disconnectSockets`, `serverSideEmit` and `serverSideEmitWithAck`. A custom adapter must add them. `InMemoryAdapter` acts on this server only.
+- Breaking: `SocketIoEmitter.serverSideEmit(event, args)` takes the event name first. Before, it took one list. Dox servers now get these events.
+- `RedisAdapter.close()` now unsubscribes its channels. It does not close the Redis connections.
+- Ack ids are now shared by all sockets of a namespace, like Node.js.
+
 ## 3.0.0-alpha.12
 
 - The package now lives in its own repo: [dartondox/dox-socketio](https://github.com/dartondox/dox-socketio).

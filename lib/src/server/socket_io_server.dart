@@ -14,6 +14,7 @@ import '../utils/id_generator.dart';
 import 'broadcast_operator.dart';
 import 'client.dart';
 import 'namespace.dart';
+import 'remote_socket.dart';
 
 /// Socket.IO v4 server.
 ///
@@ -84,8 +85,41 @@ class SocketIoServer implements EngineConnectionListener {
   /// Sends only to sockets of this server.
   BroadcastOperator get local => sockets.local;
 
+  /// Sets how long `emitWithAck` waits for the acks.
+  BroadcastOperator timeout(Duration timeout) => sockets.timeout(timeout);
+
   /// Sends [event] to all sockets of the default namespace.
   Future<void> emit(String event, [Object? data]) => sockets.emit(event, data);
+
+  /// All sockets of the default namespace, on all servers.
+  Future<List<RemoteSocket>> fetchSockets() => sockets.fetchSockets();
+
+  /// Makes all sockets of the default namespace join [room].
+  Future<void> socketsJoin(String room) => sockets.socketsJoin(room);
+
+  /// Makes all sockets of the default namespace leave [room].
+  Future<void> socketsLeave(String room) => sockets.socketsLeave(room);
+
+  /// Disconnects all sockets of the default namespace, on all servers.
+  Future<void> disconnectSockets([bool close = false]) =>
+      sockets.disconnectSockets(close);
+
+  /// Sends [event] to the default namespace of the other servers.
+  /// See [Namespace.serverSideEmit].
+  Future<void> serverSideEmit(
+    String event, [
+    List<Object?> args = const <Object?>[],
+  ]) => sockets.serverSideEmit(event, args);
+
+  /// See [Namespace.serverSideEmitWithAck].
+  Future<List<Object?>> serverSideEmitWithAck(
+    String event, [
+    List<Object?> args = const <Object?>[],
+  ]) => sockets.serverSideEmitWithAck(event, args);
+
+  /// Listens for [event] from other servers on the default namespace.
+  void onServerSideEmit(String event, ServerSideEventHandler handler) =>
+      sockets.onServerSideEmit(event, handler);
 
   /// True when [request] is for this server (its path starts with
   /// [ServerOptions.path]).

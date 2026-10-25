@@ -10,6 +10,21 @@ class Handshake {
       secure = request.secure,
       time = request.time;
 
+  /// Reads the handshake of a socket on another server. Same shape as
+  /// `socket.handshake` in Node.js.
+  Handshake.fromJson(Map<String, dynamic> json)
+    : headers = _strings(json['headers']),
+      query = _strings(json['query']),
+      auth = json['auth'] is Map<String, dynamic>
+          ? json['auth'] as Map<String, dynamic>
+          : <String, dynamic>{},
+      address = json['address']?.toString() ?? '',
+      url = json['url']?.toString() ?? '',
+      secure = json['secure'] == true,
+      time = json['issued'] is num
+          ? DateTime.fromMillisecondsSinceEpoch((json['issued'] as num).toInt())
+          : DateTime.now();
+
   /// Request headers. Names are lower case.
   final Map<String, String> headers;
 
@@ -33,4 +48,17 @@ class Handshake {
 
   /// [time] in milliseconds since epoch.
   int get issued => time.millisecondsSinceEpoch;
+
+  /// Node.js may send a list for a header or a query key. It is joined
+  /// with `, `.
+  static Map<String, String> _strings(Object? value) {
+    if (value is! Map) return <String, String>{};
+    return <String, String>{
+      for (MapEntry<dynamic, dynamic> entry in value.entries)
+        if (entry.value != null)
+          entry.key.toString(): entry.value is List
+              ? (entry.value as List<dynamic>).join(', ')
+              : entry.value.toString(),
+    };
+  }
 }
