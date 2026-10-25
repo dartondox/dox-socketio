@@ -3,10 +3,10 @@
 Socket.IO v4 server for Dart. It works with the Dox framework and with plain `dart:io`.
 
 [![pub package](https://img.shields.io/pub/v/dox_socketio.svg)](https://pub.dev/packages/dox_socketio)
-[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/dartondox/dox/blob/main/LICENSE)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/dartondox/dox-socketio/blob/main/LICENSE)
 
-Part of [Dox](https://dartondox.dev), a web backend framework for Dart, like Laravel.
-Source code: [github.com/dartondox/dox](https://github.com/dartondox/dox).
+Part of [Dox](https://dartondox.dev), a web backend framework for Dart.
+Source code: [github.com/dartondox/dox-socketio](https://github.com/dartondox/dox-socketio).
 
 ## Install
 
@@ -40,7 +40,18 @@ void onChat(SocketEvent event) {
 ```
 
 The official clients connect with no changes: `socket.io-client` (JavaScript v4) and the Dart `socket_io_client` package.
-In a Dox app, turn it on with `AppConfig(socketIo: SocketIoConfig(enabled: true))`. It then runs on the app port.
+In a Dox app, extend `SocketIoService` in `lib/`. The generated container finds it, and Socket.IO runs on the app port:
+
+```dart
+import 'package:dox_socketio/dox_socketio.dart';
+
+class AppSocketIoService extends SocketIoService {
+  AppSocketIoService()
+    : super(SocketIoConfig(namespaces: <NamespaceHandler>[ChatNamespace()]));
+}
+```
+
+`SocketIoService.server` is the server of this isolate: `SocketIoService.server?.to('room').emit('news', data)`.
 
 ## Features
 
@@ -58,4 +69,4 @@ In a Dox app, turn it on with `AppConfig(socketIo: SocketIoConfig(enabled: true)
 
 ## License
 
-MIT. See [LICENSE](https://github.com/dartondox/dox/blob/main/LICENSE).
+MIT. See [LICENSE](https://github.com/dartondox/dox-socketio/blob/main/LICENSE).

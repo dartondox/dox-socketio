@@ -2,3 +2,6 @@
 pubspec.lock
 test/interop/node_modules/
 test/interop/.npm-install.lock
+.DS_Store
+pubspec_overrides.yaml
+build/

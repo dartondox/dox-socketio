@@ -1,3 +1,11 @@
+## 3.0.0-alpha.12
+
+- The package now lives in its own repo: [dartondox/dox-socketio](https://github.com/dartondox/dox-socketio).
+- Breaking: the Dox glue moved here from `dox_core`. Add `dox_socketio` to your app.
+  - New `SocketIoService`. Extend it to turn Socket.IO on: `class AppSocketIoService extends SocketIoService { AppSocketIoService() : super(socketIoConfig); }`. It replaces `AppConfig.socketIo`.
+  - `SocketIoConfig` is now in this package. `enabled` is now `true` by default.
+  - `Dox().socketIo` is now `SocketIoService.server`.
+
 ## 3.0.0-alpha.11
 
 - Version bump only, to match the other packages.
