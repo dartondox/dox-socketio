@@ -27,6 +27,6 @@ export 'src/server/socket_io_exception.dart';
 export 'src/server/socket_io_server.dart';
 export 'src/utils/id_generator.dart';
 
-/// Dox app glue: SocketIoService, SocketIoConfig
+/// Dox app glue: SocketIoProvider, SocketIoConfig
 export 'src/dox/socket_io_config.dart';
-export 'src/dox/socket_io_service.dart';
+export 'src/dox/socket_io_provider.dart';

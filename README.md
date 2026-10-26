@@ -40,18 +40,18 @@ void onChat(SocketEvent event) {
 ```
 
 The official clients connect with no changes: `socket.io-client` (JavaScript v4) and the Dart `socket_io_client` package.
-In a Dox app, extend `SocketIoService` in `lib/`. The generated container finds it, and Socket.IO runs on the app port:
+In a Dox app, extend `SocketIoProvider` in `lib/`. The generated container finds it, and Socket.IO runs on the app port:
 
 ```dart
 import 'package:dox_socketio/dox_socketio.dart';
 
-class AppSocketIoService extends SocketIoService {
-  AppSocketIoService()
+class AppSocketIoProvider extends SocketIoProvider {
+  AppSocketIoProvider()
     : super(SocketIoConfig(namespaces: <NamespaceHandler>[ChatNamespace()]));
 }
 ```
 
-`SocketIoService.server` is the server of this isolate: `SocketIoService.server?.to('room').emit('news', data)`.
+`SocketIoProvider.server` is the server of this isolate: `SocketIoProvider.server?.to('room').emit('news', data)`.
 
 ## Features
 

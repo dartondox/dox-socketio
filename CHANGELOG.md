@@ -1,3 +1,7 @@
+## 3.0.0-alpha.14
+
+- `SocketIoProvider` (was a DoxService): extend it in your app, `shutdown()` is optional.
+
 ## 3.0.0-alpha.13
 
 - The Redis adapter now sends requests to the other servers, like `@socket.io/redis-adapter`. Before, it only answered them. Dox and Node.js servers on one Redis work together, in both directions. Both msgpack and JSON work.
