@@ -14,7 +14,7 @@ Source code: [github.com/dartondox/dox-socketio](https://github.com/dartondox/do
 dart pub add dox_socketio
 ```
 
-Dox 3.x is in alpha (`3.0.0-alpha.x`). The API can still change before the stable release.
+To see what is ready and what may still change, read [Status and roadmap](https://dartondox.dev/latest/concepts/status-and-roadmap/).
 
 ## Use it
 
