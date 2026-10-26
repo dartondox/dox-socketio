@@ -8,6 +8,7 @@ import 'package:dox_socketio/dox_socketio.dart';
 import 'package:http/http.dart' as http;
 import 'package:test/test.dart';
 
+import 'support/node_runner.dart';
 import 'support/test_app.dart';
 
 String get baseUrl => 'http://localhost:${Dox().server.httpServer.port}';
@@ -57,16 +58,7 @@ void main() {
   String? skip = skipReason();
 
   setUpAll(() async {
-    if (skip == null &&
-        !Directory('$interopDir/node_modules/socket.io-client').existsSync()) {
-      ProcessResult install = await Process.run(
-        'npm',
-        <String>['ci', '--no-audit', '--no-fund'],
-        workingDirectory: interopDir,
-        runInShell: true,
-      );
-      if (install.exitCode != 0) throw StateError('${install.stderr}');
-    }
+    if (skip == null) await NodeRunner().install();
     Dox().initialize(config);
     await Dox().startServer();
   });
