@@ -1,5 +1,4 @@
 import 'package:dox_core/dox_core.dart';
-import 'package:dox_core/utils/logger.dart';
 
 import '../server/namespace.dart';
 import '../server/socket_io_server.dart';

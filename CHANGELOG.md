@@ -1,3 +1,7 @@
+## 3.0.0-rc.1
+
+- Uses the `Logger` that `dox_core` now exports, so it needs dox_core 3.0.0-rc.1.
+
 ## 3.0.0-alpha.15
 
 - Works with `ioredis` 3, so it installs next to `dox_core` 3.0.0-alpha.17. Before, `dart pub add dox_socketio` failed in a new app.
