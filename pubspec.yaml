@@ -10,7 +10,7 @@ environment:
 dependencies:
   dox_core: ^3.0.0-alpha.15
   dox_http_native: ^3.0.0-alpha.8
-  ioredis: ^2.0.0-alpha.3
+  ioredis: '>=2.0.0-alpha.3 <4.0.0'
 
 dev_dependencies:
   http: ^1.6.0
