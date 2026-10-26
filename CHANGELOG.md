@@ -1,3 +1,7 @@
+## 3.0.0-alpha.15
+
+- Works with `ioredis` 3, so it installs next to `dox_core` 3.0.0-alpha.17. Before, `dart pub add dox_socketio` failed in a new app.
+
 ## 3.0.0-alpha.14
 
 - `SocketIoProvider` (was a DoxService): extend it in your app, `shutdown()` is optional.
