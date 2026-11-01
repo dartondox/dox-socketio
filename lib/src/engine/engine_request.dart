@@ -15,7 +15,9 @@ class EngineRequest {
   factory EngineRequest.fromHttpRequest(HttpRequest request) {
     Map<String, String> headers = <String, String>{};
     request.headers.forEach((String name, List<String> values) {
-      headers[name.toLowerCase()] = values.join(', ');
+      String key = name.toLowerCase();
+      // Cookies are split on `;` only, because a value can hold a comma.
+      headers[key] = values.join(key == 'cookie' ? '; ' : ', ');
     });
     return EngineRequest(
       headers: headers,

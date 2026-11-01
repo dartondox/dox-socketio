@@ -14,8 +14,14 @@ void main() {
   String wsUrl() =>
       'ws://127.0.0.1:${http.port}/socket.io/?EIO=4&transport=websocket';
 
-  Object? findUser(Handshake handshake) =>
-      handshake.token == 'good' ? 'alice' : null;
+  Object? findUser(Handshake handshake) {
+    if (handshake.auth['cookie'] == true) {
+      return handshake.cookie('who', decrypt: false);
+    }
+    String? token = handshake.token;
+    if (token == 'boom') throw StateError('database is down');
+    return <String, String>{'good': 'alice', 'bob': 'bob'}[token];
+  }
 
   setUp(() async {
     users.clear();
@@ -62,6 +68,33 @@ void main() {
       headers: <String, dynamic>{'Authorization': 'Bearer good'},
     );
     expect(answer, startsWith('40{"sid":'));
+    await Future<void>.delayed(Duration(milliseconds: 50));
+    expect(users, <Object?>['alice']);
+  });
+
+  test('two sockets each get their own user', () async {
+    expect(await connect(auth: '{"token":"good"}'), startsWith('40{"sid":'));
+    expect(await connect(auth: '{"token":"bob"}'), startsWith('40{"sid":'));
+    await Future<void>.delayed(Duration(milliseconds: 50));
+    expect(users, <Object?>['alice', 'bob']);
+  });
+
+  test('a findUser that throws refuses the client', () async {
+    expect(
+      await connect(auth: '{"token":"boom"}'),
+      '44{"message":"Internal error"}',
+    );
+    expect(users, isEmpty);
+  });
+
+  test('a cookie value with a comma is read whole', () async {
+    String answer = await connect(
+      auth: '{"cookie":true}',
+      headers: <String, dynamic>{'Cookie': 'theme=dark; who=carol,dan'},
+    );
+    expect(answer, startsWith('40{"sid":'));
+    await Future<void>.delayed(Duration(milliseconds: 50));
+    expect(users, <Object?>['carol,dan']);
   });
 
   test('custom message', () async {
@@ -72,18 +105,25 @@ void main() {
     expect(await connect(), '44{"message":"Log in first"}');
   });
 
-  test('handshake.cookie reads plain and encrypted cookies', () {
+  group('handshake.cookie', () {
     String key = '4HyiSrq4N5Nfg6bOadIhbFEI8zbUkpxt';
-    Dox().config = AppConfig(appKey: key);
-    String sealed = AESEncryptor.encode(
-      'session-1',
-      key,
-      associatedData: 'dox_session',
-      purpose: KeyDerivation.cookie,
-    );
-    Handshake handshake = Handshake(
+    String oldKey = 'oldKeyoldKeyoldKeyoldKeyoldKey12';
+
+    setUp(() {
+      Dox().config = AppConfig(appKey: key, previousKeys: <String>[oldKey]);
+    });
+
+    String seal(String value, String name, [String? secret]) =>
+        AESEncryptor.encode(
+          value,
+          secret ?? key,
+          associatedData: name,
+          purpose: KeyDerivation.cookie,
+        );
+
+    Handshake withCookie(String cookie) => Handshake(
       EngineRequest(
-        headers: <String, String>{'cookie': 'theme=dark; dox_session=$sealed'},
+        headers: <String, String>{'cookie': cookie},
         query: <String, String>{},
         address: '',
         url: '/',
@@ -91,9 +131,39 @@ void main() {
       ),
       <String, dynamic>{},
     );
-    expect(handshake.cookie('dox_session'), 'session-1');
-    expect(handshake.cookie('theme', decrypt: false), 'dark');
-    expect(handshake.cookie('theme'), isNull); // not encrypted
-    expect(handshake.cookie('missing'), isNull);
+
+    test('reads plain and encrypted cookies', () {
+      Handshake handshake = withCookie(
+        'theme=dark; list=a,b; dox_session=${seal('session-1', 'dox_session')}',
+      );
+      expect(handshake.cookie('dox_session'), 'session-1');
+      expect(handshake.cookie('theme', decrypt: false), 'dark');
+      expect(handshake.cookie('list', decrypt: false), 'a,b');
+      expect(handshake.cookie('theme'), isNull); // not encrypted
+      expect(handshake.cookie('missing'), isNull);
+    });
+
+    test('a cookie sealed under another name is null', () {
+      Handshake handshake = withCookie(
+        'other=${seal('session-1', 'dox_session')}',
+      );
+      expect(handshake.cookie('other'), isNull);
+    });
+
+    test('a changed cookie is null', () {
+      String sealed = seal('session-1', 'dox_session');
+      String changed =
+          '${sealed.substring(0, 10)}${sealed[10] == 'A' ? 'B' : 'A'}'
+          '${sealed.substring(11)}';
+      expect(withCookie('dox_session=$changed').cookie('dox_session'), isNull);
+    });
+
+    test('a cookie made with an old APP_KEY still works', () {
+      String sealed = seal('session-1', 'dox_session', oldKey);
+      expect(
+        withCookie('dox_session=$sealed').cookie('dox_session'),
+        'session-1',
+      );
+    });
   });
 }

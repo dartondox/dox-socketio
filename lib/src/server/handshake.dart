@@ -95,8 +95,8 @@ class Handshake {
   static Map<String, String> _parseCookies(String? header) {
     Map<String, String> out = <String, String>{};
     if (header == null) return out;
-    // `HttpHeaders` joins many Cookie headers with `, `, so split on both.
-    for (String cookie in header.split(RegExp('[;,]'))) {
+    // Split on `;` only, like `DoxRequest`. A value can hold a comma.
+    for (String cookie in header.split(';')) {
       int equals = cookie.indexOf('=');
       if (equals < 0) continue;
       out[cookie.substring(0, equals).trim()] = cookie
