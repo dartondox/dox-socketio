@@ -63,6 +63,18 @@ class AppSocketIoProvider extends SocketIoProvider {
 - `fetchSockets`, `socketsJoin`, `socketsLeave`, `disconnectSockets`, `serverSideEmit` and broadcast acks work across all servers.
 - `SocketIoEmitter` sends events from any Dart program, like `@socket.io/redis-emitter`.
 
+## Origins
+
+By default, a browser can connect only from a page of the same host. A request from another site gets `403`. This stops other sites from using the cookies of your users. A client with no `Origin` header (not a browser) is always allowed.
+
+To allow other sites, list them in `cors`:
+
+```dart
+ServerOptions(cors: CorsOptions(origins: <String>['https://app.example.com']))
+```
+
+`CorsOptions()` with `*` allows every site.
+
 ## Many servers
 
 Use the Redis adapter on each server:

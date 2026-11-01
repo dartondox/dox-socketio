@@ -117,6 +117,81 @@ void main() {
     await ok.close();
   });
 
+  group('origin check with no cors (same-origin only)', () {
+    String self() => 'http://127.0.0.1:${http.port}';
+
+    Future<int> poll(Map<String, String> headers) async {
+      HttpClient client = HttpClient();
+      HttpClientRequest req = await client.getUrl(
+        Uri.parse(
+          'http://127.0.0.1:${http.port}/socket.io/?EIO=4&transport=polling',
+        ),
+      );
+      headers.forEach(req.headers.set);
+      HttpClientResponse res = await req.close();
+      await res.drain<void>();
+      client.close(force: true);
+      return res.statusCode;
+    }
+
+    setUp(() => start(ServerOptions()));
+
+    test('websocket from another site gets 403', () async {
+      await expectLater(
+        WebSocket.connect(
+          wsUrl(),
+          headers: <String, String>{'origin': 'http://evil.test'},
+        ),
+        throwsA(isA<WebSocketException>()),
+      );
+    });
+
+    test('polling from another site gets 403', () async {
+      expect(await poll(<String, String>{'origin': 'http://evil.test'}), 403);
+      String otherPort = 'http://127.0.0.1:${http.port + 1}';
+      expect(await poll(<String, String>{'origin': otherPort}), 403);
+    });
+
+    test('same host is allowed', () async {
+      WebSocket ws = await WebSocket.connect(
+        wsUrl(),
+        headers: <String, String>{'origin': self()},
+      );
+      await ws.close();
+      expect(await poll(<String, String>{'origin': self()}), 200);
+    });
+
+    test('no Origin header is allowed (not a browser)', () async {
+      WebSocket ws = await WebSocket.connect(wsUrl());
+      await ws.close();
+      expect(await poll(<String, String>{}), 200);
+    });
+  });
+
+  test('polling from an origin in the cors list is allowed', () async {
+    await start(
+      ServerOptions(
+        cors: CorsOptions(origins: <String>['http://allowed.test']),
+      ),
+    );
+    HttpClient client = HttpClient();
+    Future<int> poll(String origin) async {
+      HttpClientRequest req = await client.getUrl(
+        Uri.parse(
+          'http://127.0.0.1:${http.port}/socket.io/?EIO=4&transport=polling',
+        ),
+      );
+      req.headers.set('origin', origin);
+      HttpClientResponse res = await req.close();
+      await res.drain<void>();
+      return res.statusCode;
+    }
+
+    expect(await poll('http://allowed.test'), 200);
+    expect(await poll('http://evil.test'), 403);
+    client.close(force: true);
+  });
+
   test('"*" origin with credentials throws', () {
     expect(
       () => SocketIoServer(

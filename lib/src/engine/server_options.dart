@@ -2,8 +2,8 @@ import '../constants/engine_constants.dart';
 
 /// CORS settings for the HTTP long-polling requests.
 ///
-/// When [origins] does not have `*`, a websocket from another origin is
-/// refused with 403.
+/// A websocket or polling request from an origin that is not the same
+/// host and is not in [origins] is refused with 403.
 class CorsOptions {
   const CorsOptions({
     this.origins = const <String>['*'],
@@ -81,7 +81,8 @@ class ServerOptions {
   /// Allow upgrades from polling to websocket.
   final bool allowUpgrades;
 
-  /// CORS settings. When null, no CORS headers are sent and websockets
-  /// from any origin are allowed.
+  /// CORS settings. When null, no CORS headers are sent and only pages of
+  /// the same host can connect from a browser. Other origins get 403.
+  /// A client with no `Origin` header (not a browser) is always allowed.
   final CorsOptions? cors;
 }
