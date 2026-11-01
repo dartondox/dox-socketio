@@ -76,7 +76,7 @@ class EngineServer implements EngineSessionStore {
       _responder.error(response, EngineError.badRequest);
       return;
     }
-    if (isWebsocket && !_originAllowed(request, cors)) {
+    if (!_originAllowed(request, cors)) {
       _responder.error(response, EngineError.forbidden);
       return;
     }
@@ -157,12 +157,43 @@ class EngineServer implements EngineSessionStore {
     );
   }
 
-  /// CORS does not cover websockets. So when [cors] lists origins, a
-  /// websocket from another origin is refused. Browsers always send
-  /// `Origin`. A client that is not a browser may leave it out.
+  /// True when a request with this `Origin` may use the server.
+  ///
+  /// A browser sends the cookies of the app with a websocket or a polling
+  /// request from any site. So without this check any site could talk to
+  /// the server as the logged in user (cross-site WebSocket hijacking).
+  /// It works like `webSocketOriginAllowed` of dox_core.
+  ///
+  /// - no `Origin` header: allowed. This is not a browser.
+  /// - the origin is allowed by [cors]: allowed.
+  /// - the origin host and port are the same as the `Host` header: allowed.
+  /// - anything else: not allowed.
   bool _originAllowed(HttpRequest request, CorsOptions? cors) {
     String? origin = request.headers.value('origin');
-    return cors == null || origin == null || cors.allows(origin);
+    if (origin == null) return true;
+    List<String> allowedOrigins = cors?.origins ?? const <String>[];
+    if (allowedOrigins.contains('*')) return true;
+    String clean = _cleanOrigin(origin);
+    for (String allowed in allowedOrigins) {
+      if (_cleanOrigin(allowed) == clean) return true;
+    }
+    String? host = request.headers.value(HttpHeaders.hostHeader);
+    if (host == null || host.isEmpty) return false;
+    Uri? originUri = Uri.tryParse(origin.trim());
+    if (originUri == null || originUri.host.isEmpty) return false;
+    Uri? hostUri = Uri.tryParse('${originUri.scheme}://${host.trim()}');
+    if (hostUri == null) return false;
+    return originUri.host.toLowerCase() == hostUri.host.toLowerCase() &&
+        originUri.port == hostUri.port;
+  }
+
+  /// `HTTPS://App.com/` and `https://app.com` are the same origin.
+  String _cleanOrigin(String origin) {
+    String o = origin.trim().toLowerCase();
+    while (o.endsWith('/')) {
+      o = o.substring(0, o.length - 1);
+    }
+    return o;
   }
 
   void _applyCors(HttpRequest request, CorsOptions cors) {
