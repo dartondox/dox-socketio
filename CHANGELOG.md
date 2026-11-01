@@ -1,3 +1,9 @@
+## Unreleased
+
+- New: `SocketAuth`, a middleware that logs a socket in at connect time. Socket.IO runs before the Dox router, so session and auth middleware do not run for it. Your function gets the handshake and gives the user, or null. The user is kept in the new `socket.user`. With null, the client gets a `connect_error` (`Unauthorized`).
+- New: `handshake.token` gives `auth.token`, else the `Authorization: Bearer` header.
+- New: `handshake.cookie(name)` reads a cookie of the handshake, decrypted with the APP_KEY like `req.cookie(name)`.
+
 ## 3.0.0
 
 - The first stable release.

@@ -91,6 +91,14 @@ class Socket implements RemoteSocket {
   @override
   final Map<String, Object?> data = <String, Object?>{};
 
+  /// The logged-in user, set by [SocketAuth]. Null when no one logged in.
+  /// It stays on this server: `fetchSockets()` on other servers does not
+  /// get it.
+  /// ```
+  /// User user = socket.user! as User;
+  /// ```
+  Object? user;
+
   final HandlerRunner _runner;
   final Map<String, List<EventHandler>> _handlers =
       <String, List<EventHandler>>{};

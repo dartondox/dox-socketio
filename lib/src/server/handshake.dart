@@ -1,3 +1,5 @@
+import 'package:dox_core/dox_core.dart';
+
 import '../engine/engine_request.dart';
 
 /// Details of the connection, like `socket.handshake` in Node.js.
@@ -48,6 +50,61 @@ class Handshake {
 
   /// [time] in milliseconds since epoch.
   int get issued => time.millisecondsSinceEpoch;
+
+  /// The token of the client, or null. It is `auth.token` (the client
+  /// sends `io(url, { auth: { token } })`), else the `Authorization:
+  /// Bearer` header. Browsers can not set headers on a websocket, so
+  /// `auth` is the usual way.
+  String? get token {
+    Object? token = auth['token'];
+    if (token is String && token.isNotEmpty) return token;
+    String? header = headers['authorization'];
+    if (header == null || !header.startsWith('Bearer ')) return null;
+    String bearer = header.substring(7).trim();
+    return bearer.isEmpty ? null : bearer;
+  }
+
+  /// The cookie [name] from the `Cookie` header, or null. Like
+  /// `req.cookie(name)` in Dox, it is decrypted with the APP_KEY, so it
+  /// needs a Dox app. A changed or foreign cookie gives null.
+  /// Pass `decrypt: false` for a plain cookie.
+  /// ```
+  /// String? sessionId = socket.handshake.cookie('dox_session');
+  /// ```
+  String? cookie(String name, {bool decrypt = true}) {
+    String? value = _cookies[name];
+    if (value == null || !decrypt) return value;
+    AppConfig config = Dox().config;
+    try {
+      return AESEncryptor.decode(
+        value,
+        config.appKey,
+        associatedData: name,
+        purpose: KeyDerivation.cookie,
+        previousSecrets: config.previousKeys,
+      );
+    } on DecryptException {
+      return null;
+    }
+  }
+
+  /// Cookies of the `Cookie` header, read on first use. Same parse as
+  /// `DoxRequest`.
+  late final Map<String, String> _cookies = _parseCookies(headers['cookie']);
+
+  static Map<String, String> _parseCookies(String? header) {
+    Map<String, String> out = <String, String>{};
+    if (header == null) return out;
+    // `HttpHeaders` joins many Cookie headers with `, `, so split on both.
+    for (String cookie in header.split(RegExp('[;,]'))) {
+      int equals = cookie.indexOf('=');
+      if (equals < 0) continue;
+      out[cookie.substring(0, equals).trim()] = cookie
+          .substring(equals + 1)
+          .trim();
+    }
+    return out;
+  }
 
   /// Node.js may send a list for a header or a query key. It is joined
   /// with `, `.
