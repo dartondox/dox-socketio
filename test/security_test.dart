@@ -117,24 +117,51 @@ void main() {
     await ok.close();
   });
 
-  group('origin check with no cors (same-origin only)', () {
+  Future<int> poll(Map<String, String> headers) async {
+    HttpClient client = HttpClient();
+    HttpClientRequest req = await client.getUrl(
+      Uri.parse(
+        'http://127.0.0.1:${http.port}/socket.io/?EIO=4&transport=polling',
+      ),
+    );
+    headers.forEach(req.headers.set);
+    HttpClientResponse res = await req.close();
+    await res.drain<void>();
+    client.close(force: true);
+    return res.statusCode;
+  }
+
+  group('no cors and no checkOrigin (open, like 3.0.0)', () {
+    test('websocket and polling from another site are allowed', () async {
+      await start(ServerOptions());
+      WebSocket ws = await WebSocket.connect(
+        wsUrl(),
+        headers: <String, String>{'origin': 'http://other.test'},
+      );
+      await ws.close();
+      expect(await poll(<String, String>{'origin': 'http://other.test'}), 200);
+    });
+
+    test('logs one warning when the server starts', () {
+      List<String> lines = <String>[];
+      IOOverrides.runZoned(
+        () {
+          SocketIoServer(options: ServerOptions());
+          SocketIoServer(options: ServerOptions(checkOrigin: true));
+          SocketIoServer(options: ServerOptions(cors: CorsOptions()));
+        },
+        stderr: () => _LineSink(lines),
+      );
+      expect(lines, hasLength(1));
+      expect(lines.single, contains('any website can connect'));
+      expect(lines.single, contains('checkOrigin: true'));
+    });
+  });
+
+  group('origin check with checkOrigin: true (same-origin only)', () {
     String self() => 'http://127.0.0.1:${http.port}';
 
-    Future<int> poll(Map<String, String> headers) async {
-      HttpClient client = HttpClient();
-      HttpClientRequest req = await client.getUrl(
-        Uri.parse(
-          'http://127.0.0.1:${http.port}/socket.io/?EIO=4&transport=polling',
-        ),
-      );
-      headers.forEach(req.headers.set);
-      HttpClientResponse res = await req.close();
-      await res.drain<void>();
-      client.close(force: true);
-      return res.statusCode;
-    }
-
-    setUp(() => start(ServerOptions()));
+    setUp(() => start(ServerOptions(checkOrigin: true)));
 
     test('websocket from another site gets 403', () async {
       await expectLater(
@@ -229,4 +256,17 @@ void main() {
     }).timeout(Duration(seconds: 2), onTimeout: () => false);
     expect(closed, isTrue);
   });
+}
+
+/// Collects the lines written to a fake stderr.
+class _LineSink implements Stdout {
+  _LineSink(this.lines);
+
+  final List<String> lines;
+
+  @override
+  void writeln([Object? object = '']) => lines.add('$object');
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
 }

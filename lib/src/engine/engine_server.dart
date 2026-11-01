@@ -36,6 +36,14 @@ class EngineServer implements EngineSessionStore {
         '"*" is not allowed.',
       );
     }
+    if (cors == null && !options.checkOrigin) {
+      stderr.writeln(
+        'dox_socketio: warning: any website can connect to this server, '
+        'because cors is not set and checkOrigin is false. A browser sends '
+        'the cookies of your users with it. To allow only your own host, '
+        'set ServerOptions(checkOrigin: true), or list your sites in cors.',
+      );
+    }
   }
 
   final ServerOptions options;
@@ -164,11 +172,14 @@ class EngineServer implements EngineSessionStore {
   /// the server as the logged in user (cross-site WebSocket hijacking).
   /// It works like `webSocketOriginAllowed` of dox_core.
   ///
+  /// - cors is null and checkOrigin is false: allowed (open by default).
   /// - no `Origin` header: allowed. This is not a browser.
   /// - the origin is allowed by [cors]: allowed.
   /// - the origin host and port are the same as the `Host` header: allowed.
   /// - anything else: not allowed.
   bool _originAllowed(HttpRequest request, CorsOptions? cors) {
+    // Open by default, like 3.0.0. The constructor logs a warning for it.
+    if (cors == null && !options.checkOrigin) return true;
     String? origin = request.headers.value('origin');
     if (origin == null) return true;
     List<String> allowedOrigins = cors?.origins ?? const <String>[];

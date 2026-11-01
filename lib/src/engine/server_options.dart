@@ -2,8 +2,8 @@ import '../constants/engine_constants.dart';
 
 /// CORS settings for the HTTP long-polling requests.
 ///
-/// A websocket or polling request from an origin that is not the same
-/// host and is not in [origins] is refused with 403.
+/// When cors is set, a websocket or polling request from an origin that is
+/// not the same host and is not in [origins] is refused with 403.
 class CorsOptions {
   const CorsOptions({
     this.origins = const <String>['*'],
@@ -48,6 +48,7 @@ class ServerOptions {
     this.transports = const <String>[transportPolling, transportWebsocket],
     this.allowUpgrades = true,
     this.cors,
+    this.checkOrigin = false,
   });
 
   /// URL path the server listens on. Must end with `/`.
@@ -81,8 +82,18 @@ class ServerOptions {
   /// Allow upgrades from polling to websocket.
   final bool allowUpgrades;
 
-  /// CORS settings. When null, no CORS headers are sent and only pages of
-  /// the same host can connect from a browser. Other origins get 403.
-  /// A client with no `Origin` header (not a browser) is always allowed.
+  /// CORS settings. When null, no CORS headers are sent.
+  ///
+  /// When set, a browser can connect only from the same host or from an
+  /// origin in [CorsOptions.origins]. Other origins get 403.
   final CorsOptions? cors;
+
+  /// Check the `Origin` header when [cors] is null.
+  ///
+  /// When false (the default) and [cors] is null, a browser page on any
+  /// site can connect, and the server logs a warning when it starts.
+  /// When true, only pages of the same host can connect. Other origins
+  /// get 403. A client with no `Origin` header (not a browser) is always
+  /// allowed. When [cors] is set, the check is always on.
+  final bool checkOrigin;
 }
