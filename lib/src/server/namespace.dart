@@ -232,7 +232,11 @@ class Namespace {
       id: _ids.next(),
       nsp: this,
       client: client,
-      handshake: Handshake(client.conn.request, auth),
+      handshake: Handshake(
+        client.conn.request,
+        auth,
+        openOrigins: client.server.options.allowedOrigins == null,
+      ),
     );
     try {
       for (Middleware middleware in _middleware) {

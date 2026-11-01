@@ -41,6 +41,23 @@ String _cleanOrigin(String origin) {
 /// first, so a Dox app with many isolates still prints it once.
 bool originWarningDone = false;
 
+/// True after the `handshake.session()` warning was written in this
+/// isolate.
+bool sessionOriginWarningDone = false;
+
+/// Writes once that `handshake.session()` is used with no
+/// `allowedOrigins`. Then any website can open a socket with the session
+/// cookie of a logged in user.
+void warnSessionOpenOriginOnce() {
+  if (sessionOriginWarningDone) return;
+  sessionOriginWarningDone = true;
+  stderr.writeln(
+    'dox_socketio: warning: handshake.session() is used, but '
+    'ServerOptions(allowedOrigins:) is not set. Any website can open a '
+    'socket as a logged in user. Set allowedOrigins to your own sites.',
+  );
+}
+
 /// Writes the open-origin warning once. Same words as the dox core
 /// warning, with the Socket.IO option name.
 void warnOpenOriginOnce() {

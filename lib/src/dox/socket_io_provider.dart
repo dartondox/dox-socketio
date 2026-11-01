@@ -28,7 +28,10 @@ class SocketIoProvider extends DoxProvider {
   void setup() {
     if (!config.enabled) return;
     // Every isolate runs setup. Print the origin warning from the first one.
-    if (Dox().isolateId != 1) originWarningDone = true;
+    if (Dox().isolateId != 1) {
+      originWarningDone = true;
+      sessionOriginWarningDone = true;
+    }
     SocketIoServer io = SocketIoServer(
       options: config.options,
       adapter: config.adapter?.create(),

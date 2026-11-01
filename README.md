@@ -84,7 +84,7 @@ class ChatNamespace extends NamespaceHandler {
 - With null, the client gets a `connect_error` with the message `Unauthorized`, and `onConnection` does not run. Change it with `SocketAuth(findUser, message: '...')`.
 - `handshake.token` is `auth.token` from the client (`io(url, { auth: { token } })`), else the `Authorization: Bearer` header.
 - `handshake.cookie('name')` reads a cookie and decrypts it with the APP_KEY, like `req.cookie('name')`. Use `decrypt: false` for a plain cookie.
-- `await handshake.session()` gives the Dox session of the client, from its session cookie. It has the same checks as `SessionMiddleware`. A changed, foreign or expired cookie gives an empty session. It is read only.
+- `await handshake.session()` gives the Dox session of the client, from its session cookie. It has the same checks as `SessionMiddleware`. A changed, foreign or expired cookie gives an empty session. It is read only. With no `allowedOrigins`, it prints a warning once.
 - `io.use(SocketAuth(findUser).handle)` does the same for the default namespace.
 
 With dox_auth, check a JWT or the web login session:

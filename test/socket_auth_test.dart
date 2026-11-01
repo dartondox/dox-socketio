@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:dox_core/dox_core.dart';
 import 'package:dox_socketio/dox_socketio.dart';
+import 'package:dox_socketio/src/engine/origin_check.dart';
 import 'package:test/test.dart';
 
 /// Checks SocketAuth and the handshake token and cookie helpers.
@@ -306,6 +307,52 @@ void main() {
         Session session = await withCookie('dox_session=$value').session();
         expect(session.get('auth_web'), isNull);
       }
+    });
+
+    test('warns once when allowedOrigins is not set', () async {
+      Handshake open = Handshake(
+        EngineRequest(
+          headers: <String, String>{},
+          query: <String, String>{},
+          address: '',
+          url: '/',
+          secure: false,
+        ),
+        <String, dynamic>{},
+        openOrigins: true,
+      );
+      sessionOriginWarningDone = false;
+      await withCookie('theme=dark').session();
+      expect(sessionOriginWarningDone, isFalse);
+      await open.session();
+      expect(sessionOriginWarningDone, isTrue);
+    });
+
+    test('the server tells the handshake about allowedOrigins', () async {
+      Future<bool> openFor(ServerOptions options) async {
+        SocketIoServer server = SocketIoServer(options: options);
+        Completer<bool> seen = Completer<bool>();
+        sessionOriginWarningDone = false;
+        server.use((Socket socket) async {
+          await socket.handshake.session();
+          seen.complete(sessionOriginWarningDone);
+        });
+        HttpServer http = await server.listen(0);
+        WebSocket ws = await WebSocket.connect(
+          'ws://127.0.0.1:${http.port}/socket.io/?EIO=4&transport=websocket',
+        );
+        ws.add('40');
+        bool warned = await seen.future;
+        await ws.close();
+        await server.close();
+        return warned;
+      }
+
+      expect(await openFor(const ServerOptions()), isTrue);
+      expect(
+        await openFor(const ServerOptions(allowedOrigins: <String>[])),
+        isFalse,
+      );
     });
 
     test('an expired session is empty', () async {
