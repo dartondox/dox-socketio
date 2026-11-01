@@ -26,6 +26,14 @@ typedef UserResolver = FutureOr<Object?> Function(Handshake handshake);
 ///   }
 /// }
 /// ```
+/// With dox_auth, check a JWT or the web login session:
+/// ```
+/// static Future<User?> findUser(Handshake handshake) async {
+///   String? token = handshake.token;
+///   if (token != null) return Auth(guard: 'api').userFromToken(token);
+///   return Auth(guard: 'web').userFromSession(await handshake.session());
+/// }
+/// ```
 class SocketAuth {
   const SocketAuth(this.resolve, {this.message = 'Unauthorized'});
 

@@ -74,18 +74,23 @@ class Handshake {
   String? cookie(String name, {bool decrypt = true}) {
     String? value = _cookies[name];
     if (value == null || !decrypt) return value;
-    AppConfig config = Dox().config;
-    try {
-      return AESEncryptor.decode(
-        value,
-        config.appKey,
-        associatedData: name,
-        purpose: KeyDerivation.cookie,
-        previousSecrets: config.previousKeys,
-      );
-    } on DecryptException {
-      return null;
-    }
+    return DoxCookie.decrypt(name, value);
+  }
+
+  /// The Dox session of the client, from its session cookie. Use it to
+  /// find the user of the web login (`SessionMiddleware`). It has the
+  /// same checks as the middleware: a missing, changed, foreign or
+  /// expired cookie gives an empty session. [config] wins over
+  /// `AppConfig.session`. Read only: changes are not saved.
+  /// ```
+  /// Session session = await handshake.session();
+  /// User? user = await Auth(guard: 'web').userFromSession(session);
+  /// ```
+  Future<Session> session([SessionConfig? config]) {
+    SessionMiddleware middleware = SessionMiddleware(config);
+    return middleware.fromCookie(
+      cookie(middleware.config.cookie, decrypt: false),
+    );
   }
 
   /// Cookies of the `Cookie` header, read on first use. Same parse as

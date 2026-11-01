@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:dox_core/dox_core.dart';
@@ -14,7 +15,10 @@ void main() {
   String wsUrl() =>
       'ws://127.0.0.1:${http.port}/socket.io/?EIO=4&transport=websocket';
 
-  Object? findUser(Handshake handshake) {
+  FutureOr<Object?> findUser(Handshake handshake) async {
+    if (handshake.auth['session'] == true) {
+      return (await handshake.session()).get('auth_web');
+    }
     if (handshake.auth['cookie'] == true) {
       return handshake.cookie('who', decrypt: false);
     }
@@ -97,6 +101,47 @@ void main() {
     expect(users, <Object?>['carol,dan']);
   });
 
+  test('the web login session logs the socket in', () async {
+    String key = '4HyiSrq4N5Nfg6bOadIhbFEI8zbUkpxt';
+    Dox().config = AppConfig(appKey: key);
+    String sealed(int at) => AESEncryptor.encode(
+      jsonEncode(<String, dynamic>{
+        'data': <String, dynamic>{'auth_web': 7},
+        'flash': <String>[],
+        'token': null,
+        'at': at,
+      }),
+      key,
+      associatedData: 'dox_session',
+      purpose: KeyDerivation.cookie,
+    );
+    int now = DateTime.now().millisecondsSinceEpoch;
+    String good = sealed(now);
+    String answer = await connect(
+      auth: '{"session":true}',
+      headers: <String, dynamic>{'Cookie': 'dox_session=$good'},
+    );
+    expect(answer, startsWith('40{"sid":'));
+    // expired, changed or missing: refused
+    String tail = good.endsWith('AAAA') ? 'BBBB' : 'AAAA';
+    String changed = '${good.substring(0, good.length - 4)}$tail';
+    for (String cookie in <String>[
+      'dox_session=${sealed(now - const Duration(hours: 3).inMilliseconds)}',
+      'dox_session=$changed',
+      'theme=dark',
+    ]) {
+      expect(
+        await connect(
+          auth: '{"session":true}',
+          headers: <String, dynamic>{'Cookie': cookie},
+        ),
+        '44{"message":"Unauthorized"}',
+      );
+    }
+    await Future<void>.delayed(Duration(milliseconds: 50));
+    expect(users, <Object?>[7]);
+  });
+
   test('custom message', () async {
     await io.close();
     io = SocketIoServer();
@@ -164,6 +209,110 @@ void main() {
         withCookie('dox_session=$sealed').cookie('dox_session'),
         'session-1',
       );
+    });
+  });
+
+  group('handshake.session', () {
+    String key = '4HyiSrq4N5Nfg6bOadIhbFEI8zbUkpxt';
+    const SessionConfig cacheSession = SessionConfig(
+      driver: 'cache',
+      store: 'memory',
+      cookie: 'cache_session',
+    );
+
+    setUp(() {
+      Dox().config = AppConfig(appKey: key);
+      Dox().cache = CacheManager(
+        CacheConfig(
+          defaultStore: 'memory',
+          stores: <String, Map<String, dynamic>>{
+            'memory': <String, dynamic>{'driver': 'memory'},
+          },
+        ),
+      );
+    });
+
+    String seal(String value, String name, [String? secret]) =>
+        AESEncryptor.encode(
+          value,
+          secret ?? key,
+          associatedData: name,
+          purpose: KeyDerivation.cookie,
+        );
+
+    Handshake withCookie(String cookie) => Handshake(
+      EngineRequest(
+        headers: <String, String>{'cookie': cookie},
+        query: <String, String>{},
+        address: '',
+        url: '/',
+        secure: false,
+      ),
+      <String, dynamic>{},
+    );
+
+    /// a `cookie` driver session payload, saved [age] ago
+    String payload([Duration age = Duration.zero]) =>
+        jsonEncode(<String, dynamic>{
+          'data': <String, dynamic>{'auth_web': 7},
+          'flash': <String>[],
+          'token': null,
+          'at': DateTime.now().subtract(age).millisecondsSinceEpoch,
+        });
+
+    test('reads a cookie driver session', () async {
+      Session session = await withCookie(
+        'dox_session=${seal(payload(), 'dox_session')}',
+      ).session();
+      expect(session.get('auth_web'), 7);
+    });
+
+    test('reads a cache driver session', () async {
+      await Dox().cache.store('memory').put('session:abc', <String, dynamic>{
+        'data': <String, dynamic>{'auth_web': 8},
+        'flash': <String>[],
+        'token': null,
+      }, Duration(minutes: 5));
+      Session session = await withCookie(
+        'cache_session=${seal('abc', 'cache_session')}',
+      ).session(cacheSession);
+      expect(session.get('auth_web'), 8);
+      // an unknown id
+      Session unknown = await withCookie(
+        'cache_session=${seal('nope', 'cache_session')}',
+      ).session(cacheSession);
+      expect(unknown.get('auth_web'), isNull);
+      // a plain id, not encrypted
+      Session plain = await withCookie('cache_session=abc')
+          .session(cacheSession);
+      expect(plain.get('auth_web'), isNull);
+    });
+
+    test('no cookie is an empty session', () async {
+      expect((await withCookie('theme=dark').session()).all(), isEmpty);
+    });
+
+    test('a changed, foreign or plain cookie is an empty session', () async {
+      String sealed = seal(payload(), 'dox_session');
+      String changed =
+          '${sealed.substring(0, 10)}${sealed[10] == 'A' ? 'B' : 'A'}'
+          '${sealed.substring(11)}';
+      for (String value in <String>[
+        changed,
+        seal(payload(), 'other'),
+        seal(payload(), 'dox_session', 'anotherKeyanotherKeyanotherKey12'),
+        payload(),
+      ]) {
+        Session session = await withCookie('dox_session=$value').session();
+        expect(session.get('auth_web'), isNull);
+      }
+    });
+
+    test('an expired session is empty', () async {
+      Session session = await withCookie(
+        'dox_session=${seal(payload(Duration(hours: 3)), 'dox_session')}',
+      ).session();
+      expect(session.get('auth_web'), isNull);
     });
   });
 }
