@@ -1,9 +1,10 @@
 import '../constants/engine_constants.dart';
+import 'origin_check.dart';
 
 /// CORS settings for the HTTP long-polling requests.
 ///
-/// When cors is set, a websocket or polling request from an origin that is
-/// not the same host and is not in [origins] is refused with 403.
+/// When [ServerOptions.allowedOrigins] is null, a websocket from an origin
+/// not in [origins] is refused with 403. Polling is not checked.
 class CorsOptions {
   const CorsOptions({
     this.origins = const <String>['*'],
@@ -29,10 +30,9 @@ class CorsOptions {
   /// How long a browser may cache the preflight answer.
   final Duration? maxAge;
 
-  /// True when [origin] may call the server.
-  bool allows(String origin) {
-    return origins.contains('*') || origins.contains(origin);
-  }
+  /// True when [origin] may call the server. Case and a trailing `/` do
+  /// not matter.
+  bool allows(String origin) => originInList(origin, origins);
 }
 
 /// Options of the Engine.IO and Socket.IO server.
@@ -48,7 +48,7 @@ class ServerOptions {
     this.transports = const <String>[transportPolling, transportWebsocket],
     this.allowUpgrades = true,
     this.cors,
-    this.checkOrigin = false,
+    this.allowedOrigins,
   });
 
   /// URL path the server listens on. Must end with `/`.
@@ -83,17 +83,20 @@ class ServerOptions {
   final bool allowUpgrades;
 
   /// CORS settings. When null, no CORS headers are sent.
-  ///
-  /// When set, a browser can connect only from the same host or from an
-  /// origin in [CorsOptions.origins]. Other origins get 403.
   final CorsOptions? cors;
 
-  /// Check the `Origin` header when [cors] is null.
+  /// Turns on the `Origin` check for websocket and polling requests.
   ///
-  /// When false (the default) and [cors] is null, a browser page on any
-  /// site can connect, and the server logs a warning when it starts.
-  /// When true, only pages of the same host can connect. Other origins
-  /// get 403. A client with no `Origin` header (not a browser) is always
-  /// allowed. When [cors] is set, the check is always on.
-  final bool checkOrigin;
+  /// - `null` (the default): no new check. A websocket is checked against
+  ///   [cors] when it is set, like 3.0.0. Polling is not checked. The
+  ///   server logs one warning at start, because any website can connect
+  ///   with the cookies of the user.
+  /// - `[]`: only pages of the same host can connect.
+  /// - a list, like `['https://app.example.com']`: the same host and the
+  ///   listed sites can connect.
+  /// - `['*']`: every site can connect.
+  ///
+  /// Other origins get 403. A client with no `Origin` header (not a
+  /// browser) is always allowed. [cors] still sets the CORS headers.
+  final List<String>? allowedOrigins;
 }

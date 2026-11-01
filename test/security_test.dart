@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dox_socketio/dox_socketio.dart';
+import 'package:dox_socketio/src/engine/origin_check.dart';
 import 'package:test/test.dart';
 
 /// Checks for the fixes of the security review.
@@ -117,7 +118,7 @@ void main() {
     await ok.close();
   });
 
-  Future<int> poll(Map<String, String> headers) async {
+  Future<HttpClientResponse> pollResponse(Map<String, String> headers) async {
     HttpClient client = HttpClient();
     HttpClientRequest req = await client.getUrl(
       Uri.parse(
@@ -128,49 +129,80 @@ void main() {
     HttpClientResponse res = await req.close();
     await res.drain<void>();
     client.close(force: true);
-    return res.statusCode;
+    return res;
   }
 
-  group('no cors and no checkOrigin (open, like 3.0.0)', () {
+  Future<int> poll(Map<String, String> headers) async {
+    return (await pollResponse(headers)).statusCode;
+  }
+
+  Future<void> wsAllowed(String origin) async {
+    WebSocket ws = await WebSocket.connect(
+      wsUrl(),
+      headers: <String, String>{'origin': origin},
+    );
+    await ws.close();
+  }
+
+  Future<void> wsRefused(String origin) async {
+    await expectLater(
+      WebSocket.connect(wsUrl(), headers: <String, String>{'origin': origin}),
+      throwsA(isA<WebSocketException>()),
+    );
+  }
+
+  String self() => 'http://127.0.0.1:${http.port}';
+
+  group('allowedOrigins null, no cors (open, like 3.0.0)', () {
     test('websocket and polling from another site are allowed', () async {
       await start(ServerOptions());
-      WebSocket ws = await WebSocket.connect(
-        wsUrl(),
-        headers: <String, String>{'origin': 'http://other.test'},
-      );
-      await ws.close();
+      await wsAllowed('http://other.test');
       expect(await poll(<String, String>{'origin': 'http://other.test'}), 200);
     });
 
-    test('logs one warning when the server starts', () {
+    test('logs one warning, and none when allowedOrigins is set', () {
       List<String> lines = <String>[];
-      IOOverrides.runZoned(
-        () {
-          SocketIoServer(options: ServerOptions());
-          SocketIoServer(options: ServerOptions(checkOrigin: true));
-          SocketIoServer(options: ServerOptions(cors: CorsOptions()));
-        },
-        stderr: () => _LineSink(lines),
-      );
+      originWarningDone = false;
+      IOOverrides.runZoned(() {
+        SocketIoServer(options: ServerOptions(allowedOrigins: <String>[]));
+        SocketIoServer(options: ServerOptions());
+        SocketIoServer(options: ServerOptions());
+        SocketIoServer(options: ServerOptions(cors: CorsOptions()));
+      }, stderr: () => _LineSink(lines));
       expect(lines, hasLength(1));
-      expect(lines.single, contains('any website can connect'));
-      expect(lines.single, contains('checkOrigin: true'));
+      expect(lines.single, contains('Any website can open a socket'));
+      expect(lines.single, contains('ServerOptions(allowedOrigins:'));
     });
   });
 
-  group('origin check with checkOrigin: true (same-origin only)', () {
-    String self() => 'http://127.0.0.1:${http.port}';
+  group('allowedOrigins null, cors list (like 3.0.0)', () {
+    setUp(
+      () => start(
+        ServerOptions(
+          cors: CorsOptions(origins: <String>['http://allowed.test']),
+        ),
+      ),
+    );
 
-    setUp(() => start(ServerOptions(checkOrigin: true)));
+    test('websocket from a listed site is allowed', () async {
+      await wsAllowed('http://allowed.test');
+    });
 
     test('websocket from another site gets 403', () async {
-      await expectLater(
-        WebSocket.connect(
-          wsUrl(),
-          headers: <String, String>{'origin': 'http://evil.test'},
-        ),
-        throwsA(isA<WebSocketException>()),
-      );
+      await wsRefused('http://evil.test');
+    });
+
+    test('polling from a site not in the list still works', () async {
+      expect(await poll(<String, String>{'origin': 'http://evil.test'}), 200);
+      expect(await poll(<String, String>{'origin': self()}), 200);
+    });
+  });
+
+  group('allowedOrigins: [] (same host only)', () {
+    setUp(() => start(ServerOptions(allowedOrigins: <String>[])));
+
+    test('websocket from another site gets 403', () async {
+      await wsRefused('http://evil.test');
     });
 
     test('polling from another site gets 403', () async {
@@ -180,11 +212,7 @@ void main() {
     });
 
     test('same host is allowed', () async {
-      WebSocket ws = await WebSocket.connect(
-        wsUrl(),
-        headers: <String, String>{'origin': self()},
-      );
-      await ws.close();
+      await wsAllowed(self());
       expect(await poll(<String, String>{'origin': self()}), 200);
     });
 
@@ -195,28 +223,49 @@ void main() {
     });
   });
 
-  test('polling from an origin in the cors list is allowed', () async {
+  test('allowedOrigins list allows same host and listed sites', () async {
     await start(
-      ServerOptions(
-        cors: CorsOptions(origins: <String>['http://allowed.test']),
+      ServerOptions(allowedOrigins: <String>['HTTP://Allowed.test/']),
+    );
+    await wsAllowed('http://allowed.test');
+    await wsAllowed(self());
+    await wsRefused('http://evil.test');
+    expect(await poll(<String, String>{'origin': 'http://allowed.test'}), 200);
+    expect(await poll(<String, String>{'origin': 'http://evil.test'}), 403);
+  });
+
+  test('allowedOrigins "*" allows every site', () async {
+    await start(ServerOptions(allowedOrigins: <String>['*']));
+    await wsAllowed('http://evil.test');
+    expect(await poll(<String, String>{'origin': 'http://evil.test'}), 200);
+  });
+
+  group('allowedOrigins set, cors list', () {
+    setUp(
+      () => start(
+        ServerOptions(
+          allowedOrigins: <String>['http://allowed.test'],
+          cors: CorsOptions(origins: <String>['HTTP://Allowed.test/']),
+        ),
       ),
     );
-    HttpClient client = HttpClient();
-    Future<int> poll(String origin) async {
-      HttpClientRequest req = await client.getUrl(
-        Uri.parse(
-          'http://127.0.0.1:${http.port}/socket.io/?EIO=4&transport=polling',
-        ),
-      );
-      req.headers.set('origin', origin);
-      HttpClientResponse res = await req.close();
-      await res.drain<void>();
-      return res.statusCode;
-    }
 
-    expect(await poll('http://allowed.test'), 200);
-    expect(await poll('http://evil.test'), 403);
-    client.close(force: true);
+    test('a listed site passes and gets the CORS headers', () async {
+      HttpClientResponse res = await pollResponse(<String, String>{
+        'origin': 'http://allowed.test',
+      });
+      expect(res.statusCode, 200);
+      expect(
+        res.headers.value('access-control-allow-origin'),
+        'http://allowed.test',
+      );
+      await wsAllowed('http://allowed.test');
+    });
+
+    test('another site gets 403 on websocket and polling', () async {
+      await wsRefused('http://evil.test');
+      expect(await poll(<String, String>{'origin': 'http://evil.test'}), 403);
+    });
   });
 
   test('"*" origin with credentials throws', () {

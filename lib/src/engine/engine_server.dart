@@ -7,6 +7,7 @@ import '../utils/id_generator.dart';
 import 'engine_request.dart';
 import 'engine_socket.dart';
 import 'http_responder.dart';
+import 'origin_check.dart';
 import 'polling_transport.dart';
 import 'server_options.dart';
 import 'transport.dart';
@@ -36,14 +37,7 @@ class EngineServer implements EngineSessionStore {
         '"*" is not allowed.',
       );
     }
-    if (cors == null && !options.checkOrigin) {
-      stderr.writeln(
-        'dox_socketio: warning: any website can connect to this server, '
-        'because cors is not set and checkOrigin is false. A browser sends '
-        'the cookies of your users with it. To allow only your own host, '
-        'set ServerOptions(checkOrigin: true), or list your sites in cors.',
-      );
-    }
+    if (options.allowedOrigins == null) warnOpenOriginOnce();
   }
 
   final ServerOptions options;
@@ -84,7 +78,7 @@ class EngineServer implements EngineSessionStore {
       _responder.error(response, EngineError.badRequest);
       return;
     }
-    if (!_originAllowed(request, cors)) {
+    if (!_originAllowed(request, cors, isWebsocket)) {
       _responder.error(response, EngineError.forbidden);
       return;
     }
@@ -168,43 +162,28 @@ class EngineServer implements EngineSessionStore {
   /// True when a request with this `Origin` may use the server.
   ///
   /// A browser sends the cookies of the app with a websocket or a polling
-  /// request from any site. So without this check any site could talk to
-  /// the server as the logged in user (cross-site WebSocket hijacking).
-  /// It works like `webSocketOriginAllowed` of dox_core.
+  /// request from any site. So without a check any site could talk to the
+  /// server as the logged in user (cross-site WebSocket hijacking).
   ///
-  /// - cors is null and checkOrigin is false: allowed (open by default).
   /// - no `Origin` header: allowed. This is not a browser.
-  /// - the origin is allowed by [cors]: allowed.
-  /// - the origin host and port are the same as the `Host` header: allowed.
-  /// - anything else: not allowed.
-  bool _originAllowed(HttpRequest request, CorsOptions? cors) {
-    // Open by default, like 3.0.0. The constructor logs a warning for it.
-    if (cors == null && !options.checkOrigin) return true;
+  /// - [ServerOptions.allowedOrigins] is null: the 3.0.0 rule. Only a
+  ///   websocket is checked, and only against [cors] when it is set.
+  /// - otherwise: allowed when the origin is the same host as the `Host`
+  ///   header, or is in `allowedOrigins`. It works like
+  ///   `webSocketOriginAllowed` of dox_core.
+  bool _originAllowed(
+    HttpRequest request,
+    CorsOptions? cors,
+    bool isWebsocket,
+  ) {
     String? origin = request.headers.value('origin');
     if (origin == null) return true;
-    List<String> allowedOrigins = cors?.origins ?? const <String>[];
-    if (allowedOrigins.contains('*')) return true;
-    String clean = _cleanOrigin(origin);
-    for (String allowed in allowedOrigins) {
-      if (_cleanOrigin(allowed) == clean) return true;
+    List<String>? allowed = options.allowedOrigins;
+    if (allowed == null) {
+      return !isWebsocket || cors == null || cors.allows(origin);
     }
-    String? host = request.headers.value(HttpHeaders.hostHeader);
-    if (host == null || host.isEmpty) return false;
-    Uri? originUri = Uri.tryParse(origin.trim());
-    if (originUri == null || originUri.host.isEmpty) return false;
-    Uri? hostUri = Uri.tryParse('${originUri.scheme}://${host.trim()}');
-    if (hostUri == null) return false;
-    return originUri.host.toLowerCase() == hostUri.host.toLowerCase() &&
-        originUri.port == hostUri.port;
-  }
-
-  /// `HTTPS://App.com/` and `https://app.com` are the same origin.
-  String _cleanOrigin(String origin) {
-    String o = origin.trim().toLowerCase();
-    while (o.endsWith('/')) {
-      o = o.substring(0, o.length - 1);
-    }
-    return o;
+    return originInList(origin, allowed) ||
+        originIsSameHost(origin, request.headers.value(HttpHeaders.hostHeader));
   }
 
   void _applyCors(HttpRequest request, CorsOptions cors) {
