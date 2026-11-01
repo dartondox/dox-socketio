@@ -235,7 +235,8 @@ class Namespace {
       handshake: Handshake(
         client.conn.request,
         auth,
-        openOrigins: client.server.options.allowedOrigins == null,
+        openOrigins:
+            client.server.options.allowedOrigins?.contains('*') ?? true,
       ),
     );
     try {

@@ -29,7 +29,8 @@ class Handshake {
           ? DateTime.fromMillisecondsSinceEpoch((json['issued'] as num).toInt())
           : DateTime.now();
 
-  /// True when the server has no `allowedOrigins`. Then [session]
+  /// True when the server has no `allowedOrigins`, or allows `*`. Then
+  /// [session]
   /// warns once.
   final bool openOrigins;
 

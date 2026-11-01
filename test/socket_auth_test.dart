@@ -350,6 +350,10 @@ void main() {
 
       expect(await openFor(const ServerOptions()), isTrue);
       expect(
+        await openFor(const ServerOptions(allowedOrigins: <String>['*'])),
+        isTrue,
+      );
+      expect(
         await openFor(const ServerOptions(allowedOrigins: <String>[])),
         isFalse,
       );

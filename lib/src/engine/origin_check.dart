@@ -53,7 +53,7 @@ void warnSessionOpenOriginOnce() {
   sessionOriginWarningDone = true;
   stderr.writeln(
     'dox_socketio: warning: handshake.session() is used, but '
-    'ServerOptions(allowedOrigins:) is not set. Any website can open a '
+    'ServerOptions(allowedOrigins:) is not set or has "*". Any website can open a '
     'socket as a logged in user. Set allowedOrigins to your own sites.',
   );
 }
