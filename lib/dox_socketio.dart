@@ -23,6 +23,7 @@ export 'src/server/handshake.dart';
 export 'src/server/namespace.dart';
 export 'src/server/remote_socket.dart';
 export 'src/server/socket.dart';
+export 'src/server/socket_auth.dart';
 export 'src/server/socket_io_exception.dart';
 export 'src/server/socket_io_server.dart';
 export 'src/utils/id_generator.dart';
