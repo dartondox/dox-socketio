@@ -65,15 +65,19 @@ class AppSocketIoProvider extends SocketIoProvider {
 
 ## Origins
 
-By default, a browser can connect only from a page of the same host. A request from another site gets `403`. This stops other sites from using the cookies of your users. A client with no `Origin` header (not a browser) is always allowed.
+By default, the server does not check the `Origin` header of polling requests. It checks a websocket only against `cors`, when `cors` is set. So a browser page on another site can connect, with the cookies of your users. The server logs one warning about this when it starts.
 
-To allow other sites, list them in `cors`:
+To turn on the check, set `allowedOrigins`:
 
 ```dart
-ServerOptions(cors: CorsOptions(origins: <String>['https://app.example.com']))
+ServerOptions(allowedOrigins: <String>['https://app.example.com'])
 ```
 
-`CorsOptions()` with `*` allows every site.
+- `[]`: only pages of the same host can connect.
+- A list: the same host and the listed sites can connect.
+- `['*']`: every site can connect.
+
+Then a websocket or polling request from another origin gets `403`. A client with no `Origin` header (not a browser) is always allowed. Case and a trailing `/` do not matter. `cors` still sets the CORS headers for polling.
 
 ## Many servers
 

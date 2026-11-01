@@ -1,5 +1,6 @@
 import 'package:dox_core/dox_core.dart';
 
+import '../engine/origin_check.dart';
 import '../server/namespace.dart';
 import '../server/socket_io_server.dart';
 import 'socket_io_config.dart';
@@ -26,6 +27,8 @@ class SocketIoProvider extends DoxProvider {
   @override
   void setup() {
     if (!config.enabled) return;
+    // Every isolate runs setup. Print the origin warning from the first one.
+    if (Dox().isolateId != 1) originWarningDone = true;
     SocketIoServer io = SocketIoServer(
       options: config.options,
       adapter: config.adapter?.create(),
