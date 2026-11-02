@@ -1,10 +1,11 @@
 import 'package:dox_core/dox_core.dart';
 
 import '../engine/engine_request.dart';
+import '../engine/origin_check.dart';
 
 /// Details of the connection, like `socket.handshake` in Node.js.
 class Handshake {
-  Handshake(EngineRequest request, this.auth)
+  Handshake(EngineRequest request, this.auth, {this.openOrigins = false})
     : headers = request.headers,
       query = request.query,
       address = request.address,
@@ -23,9 +24,15 @@ class Handshake {
       address = json['address']?.toString() ?? '',
       url = json['url']?.toString() ?? '',
       secure = json['secure'] == true,
+      openOrigins = false,
       time = json['issued'] is num
           ? DateTime.fromMillisecondsSinceEpoch((json['issued'] as num).toInt())
           : DateTime.now();
+
+  /// True when the server has no `allowedOrigins`, or allows `*`. Then
+  /// [session]
+  /// warns once.
+  final bool openOrigins;
 
   /// Request headers. Names are lower case.
   final Map<String, String> headers;
@@ -74,18 +81,26 @@ class Handshake {
   String? cookie(String name, {bool decrypt = true}) {
     String? value = _cookies[name];
     if (value == null || !decrypt) return value;
-    AppConfig config = Dox().config;
-    try {
-      return AESEncryptor.decode(
-        value,
-        config.appKey,
-        associatedData: name,
-        purpose: KeyDerivation.cookie,
-        previousSecrets: config.previousKeys,
-      );
-    } on DecryptException {
-      return null;
-    }
+    return DoxCookie.decrypt(name, value);
+  }
+
+  /// The Dox session of the client, from its session cookie. Use it to
+  /// find the user of the web login (`SessionMiddleware`). It has the
+  /// same checks as the middleware: a missing, changed, foreign or
+  /// expired cookie gives an empty session. [config] wins over
+  /// `AppConfig.session`. Read only: changes are not saved.
+  /// With no `ServerOptions.allowedOrigins`, it warns once: any website
+  /// could then open a socket with the cookie of a logged in user.
+  /// ```
+  /// Session session = await handshake.session();
+  /// User? user = await Auth(guard: 'web').userFromSession(session);
+  /// ```
+  Future<Session> session([SessionConfig? config]) {
+    if (openOrigins) warnSessionOpenOriginOnce();
+    SessionMiddleware middleware = SessionMiddleware(config);
+    return middleware.fromCookie(
+      cookie(middleware.config.cookie, decrypt: false),
+    );
   }
 
   /// Cookies of the `Cookie` header, read on first use. Same parse as
