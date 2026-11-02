@@ -60,13 +60,14 @@ class Handshake {
 
   /// The token of the client, or null. It is `auth.token` (the client
   /// sends `io(url, { auth: { token } })`), else the `Authorization:
-  /// Bearer` header. Browsers can not set headers on a websocket, so
-  /// `auth` is the usual way.
+  /// Bearer` header (`bearer` in any case, like dox_auth). Browsers can
+  /// not set headers on a websocket, so `auth` is the usual way.
   String? get token {
     Object? token = auth['token'];
     if (token is String && token.isNotEmpty) return token;
     String? header = headers['authorization'];
-    if (header == null || !header.startsWith('Bearer ')) return null;
+    if (header == null || header.length < 7) return null;
+    if (header.substring(0, 7).toLowerCase() != 'bearer ') return null;
     String bearer = header.substring(7).trim();
     return bearer.isEmpty ? null : bearer;
   }
