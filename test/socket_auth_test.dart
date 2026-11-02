@@ -77,6 +77,15 @@ void main() {
     expect(users, <Object?>['alice']);
   });
 
+  test('the bearer word can be in any case', () async {
+    String answer = await connect(
+      headers: <String, dynamic>{'Authorization': 'bearer good'},
+    );
+    expect(answer, startsWith('40{"sid":'));
+    await Future<void>.delayed(Duration(milliseconds: 50));
+    expect(users, <Object?>['alice']);
+  });
+
   test('two sockets each get their own user', () async {
     expect(await connect(auth: '{"token":"good"}'), startsWith('40{"sid":'));
     expect(await connect(auth: '{"token":"bob"}'), startsWith('40{"sid":'));
