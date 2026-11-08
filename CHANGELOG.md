@@ -6,6 +6,9 @@
 - New: `handshake.cookie(name)` reads a cookie of the handshake, decrypted with the APP_KEY like `req.cookie(name)`.
 - New: `await handshake.session()` loads the Dox session of the client from its session cookie, with `SessionMiddleware().fromCookie` of dox_core. The checks are the same as for a request: a changed, foreign or expired cookie gives an empty session. With dox_auth, `Auth(guard: 'web').userFromSession(session)` gives the user of the web login, and `Auth(guard: 'api').userFromToken(handshake.token)` checks a JWT. Needs the next dox_core. With no `ServerOptions.allowedOrigins`, or with `'*'` in it, it prints a warning once, because any website could then open a socket with the session cookie.
 - `handshake.cookie(name)` now decrypts with `DoxCookie.decrypt` of dox_core, the same code as `req.cookie(name)`.
+- New: `ServerOptions(allowedOrigins:)` turns on an origin check, with the same rule as dox_core. `[]` allows the same host only, a list also allows those sites, `['*']` allows all. Then a websocket or polling request from another origin gets 403. The default (`null`) keeps the 3.0.0 rule.
+- With no `allowedOrigins`, the server prints one warning at start that any site can connect.
+- Origin matching for `cors` now ignores case and a trailing `/`.
 
 ## 3.0.0
 
