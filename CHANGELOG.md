@@ -1,4 +1,4 @@
-## Unreleased
+## 3.1.0
 
 - Fix: `handshake.token` reads the `Authorization` header with `bearer` in any case (`Bearer`, `bearer`, `BEARER`), like dox_auth. Before, only `Bearer` worked.
 - New: `SocketAuth`, a middleware that logs a socket in at connect time. Socket.IO runs before the Dox router, so session and auth middleware do not run for it. Your function gets the handshake and gives the user, or null. The user is kept in the new `socket.user`. With null, the client gets a `connect_error` (`Unauthorized`).
