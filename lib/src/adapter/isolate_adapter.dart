@@ -18,6 +18,10 @@ import 'redis_adapter.dart';
 ///
 /// It works inside one process only. For many servers, use [RedisAdapter].
 class IsolateAdapter extends PubSubAdapter {
+  /// The [IsolateBus] channel of this adapter. Your own channels never
+  /// get its messages.
+  static const String busChannel = 'dox_socketio';
+
   IsolateAdapter({IsolateBus? bus, super.requestsTimeout, super.ids})
     : bus = bus ?? IsolateBus.instance;
 
@@ -30,7 +34,7 @@ class IsolateAdapter extends PubSubAdapter {
   /// namespace by the channel.
   @override
   Future<void> subscribe(Namespace nsp) async {
-    _listening ??= bus.messages.listen(_onBusMessage);
+    _listening ??= bus.on(busChannel).listen(_onBusMessage);
   }
 
   @override
@@ -41,7 +45,7 @@ class IsolateAdapter extends PubSubAdapter {
 
   @override
   Future<void> publish(String channel, Uint8List message) async {
-    bus.publish(<Object>[channel, message]);
+    bus.publish(busChannel, <Object>[channel, message]);
   }
 
   /// The isolates that listen. All isolates of a Dox app register the

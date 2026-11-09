@@ -33,11 +33,11 @@ class SocketIoProvider extends DoxProvider {
       originWarningDone = true;
       sessionOriginWarningDone = true;
     }
-    AppConfig app = Dox().config;
+    int isolates = Dox().isolateCount;
     // Many isolates: share broadcasts between them, like one server.
     SocketAdapterFactory? adapter =
         config.adapter ??
-        (app.totalIsolate > 1 ? const IsolateSocketAdapterFactory() : null);
+        (isolates > 1 ? const IsolateSocketAdapterFactory() : null);
     SocketIoServer io = SocketIoServer(
       options: config.options,
       adapter: adapter?.create(),
@@ -48,10 +48,10 @@ class SocketIoProvider extends DoxProvider {
     server = io;
     Route.mount(config.options.path, io.handle);
     if (Dox().isolateId == 1 &&
-        app.totalIsolate > 1 &&
+        isolates > 1 &&
         config.options.transports.contains('polling')) {
       Logger.info(
-        'Socket.IO runs on ${app.totalIsolate} isolates: '
+        'Socket.IO runs on $isolates isolates: '
         "clients should use transports: ['websocket'] (long-polling needs "
         'one isolate or sticky sessions).',
       );

@@ -84,7 +84,7 @@ void main() {
     return replies.current;
   }
 
-  test('SocketIoProvider uses it with many isolates', () {
+  test('IsolateSocketAdapterFactory makes an IsolateAdapter', () {
     expect(const IsolateSocketAdapterFactory().create(), isA<IsolateAdapter>());
   });
 

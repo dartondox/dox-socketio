@@ -24,7 +24,7 @@ import 'redis_adapter.dart';
 ///
 /// - Broadcasts: `[uid, packet, {rooms, except, flags}]` on
 ///   `socket.io#<namespace>#`, or `socket.io#<namespace>#<room>#` when
-///   there is exactly one room. It listens to both with PSUBSCRIBE.
+///   there is exactly one room. It listens to both.
 /// - Requests (`socketsJoin`, `socketsLeave`, `disconnectSockets`,
 ///   `fetchSockets`, `serverSideEmit`, broadcasts with an ack) on
 ///   `socket.io-request#<namespace>#`. Answers go to
