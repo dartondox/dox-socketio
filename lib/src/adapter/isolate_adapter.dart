@@ -37,11 +37,15 @@ class IsolateAdapter extends PubSubAdapter {
     _listening ??= bus.on(busChannel).listen(_onBusMessage);
   }
 
+  /// Does not stop listening. The other isolates count this one until
+  /// it leaves the bus (when the isolate stops), so after [close] it
+  /// still answers them, with no sockets. Else their `fetchSockets` and
+  /// `serverSideEmitWithAck` wait for the timeout. The bus ends the
+  /// listen when it closes.
+  // ponytail: a closed adapter answers until the bus closes. Give the
+  // bus a per-channel leave if apps open and close many servers.
   @override
-  Future<void> unsubscribe(Namespace nsp) async {
-    await _listening?.cancel();
-    _listening = null;
-  }
+  Future<void> unsubscribe(Namespace nsp) async {}
 
   @override
   Future<void> publish(String channel, Uint8List message) async {
