@@ -1,86 +1,14 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:ioredis/ioredis.dart';
 
 import '../server/namespace.dart';
-import 'msgpack.dart';
 import 'pub_sub_adapter.dart';
 
-/// How messages are written to Redis.
-enum RedisFormat {
-  /// MessagePack. The default of `@socket.io/redis-adapter` and of the
-  /// emitters (Node.js, PHP, Python, Go).
-  msgpack,
-
-  /// JSON, for a Node.js adapter that uses a JSON parser.
-  json;
-
-  /// Encodes [value] in this format.
-  Uint8List encode(Object? value) {
-    if (this == RedisFormat.msgpack) return MsgPack.encode(value);
-    return utf8.encode(jsonEncode(_encodeBinary(value), toEncodable: _other));
-  }
-
-  /// Decodes a message in either format. JSON starts with `[` or `{`.
-  /// In msgpack those bytes are small numbers, never a whole message.
-  static Object? decode(Uint8List bytes) {
-    if (bytes.isNotEmpty && (bytes[0] == 0x5b || bytes[0] == 0x7b)) {
-      return _decodeBinary(jsonDecode(utf8.decode(bytes)));
-    }
-    return MsgPack.decode(bytes);
-  }
-
-  /// In JSON, binary data uses the shape of a Node.js Buffer. jsonEncode
-  /// sees a [Uint8List] as a plain list, so it is replaced first.
-  static Object? _encodeBinary(Object? value) {
-    if (value is Uint8List) {
-      return <String, Object>{'type': 'Buffer', 'data': value.toList()};
-    }
-    if (value is List) return value.map(_encodeBinary).toList();
-    if (value is Map) return value.map(_encodeEntry);
-    return value;
-  }
-
-  static MapEntry<String, Object?> _encodeEntry(Object? k, Object? v) =>
-      MapEntry<String, Object?>(k.toString(), _encodeBinary(v));
-
-  static Object? _other(Object? value) {
-    if (value is Set) return _encodeBinary(value.toList());
-    if (value is DateTime) return value.toIso8601String();
-    return _encodeBinary((value as dynamic).toJson());
-  }
-
-  static Object? _decodeBinary(Object? value) {
-    if (value is List) return value.map(_decodeBinary).toList();
-    if (value is Map) {
-      if (value['type'] == 'Buffer' && value['data'] is List) {
-        return Uint8List.fromList((value['data'] as List<dynamic>).cast<int>());
-      }
-      return value.map(_decodeEntry);
-    }
-    return value;
-  }
-
-  static MapEntry<String, Object?> _decodeEntry(Object? k, Object? v) =>
-      MapEntry<String, Object?>(k.toString(), _decodeBinary(v));
-}
-
-/// Request types on the request channel. Same numbers as
-/// `@socket.io/redis-adapter`.
-class RedisRequestType {
-  static const int sockets = 0;
-  static const int allRooms = 1;
-  static const int remoteJoin = 2;
-  static const int remoteLeave = 3;
-  static const int remoteDisconnect = 4;
-  static const int remoteFetch = 5;
-  static const int serverSideEmit = 6;
-  static const int broadcast = 7;
-  static const int broadcastClientCount = 8;
-  static const int broadcastAck = 9;
-}
+// RedisFormat and RedisRequestType live in pub_sub_adapter.dart, so it
+// does not import this file. Exported here too for code that imports it.
+export 'pub_sub_adapter.dart' show RedisFormat, RedisRequestType;
 
 /// Shares broadcasts between servers with Redis pub/sub.
 ///

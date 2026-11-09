@@ -1,6 +1,7 @@
 ## Unreleased
 
 - Fix: a closed `IsolateAdapter` still answers the other isolates until its isolate leaves the bus. Before, during a shutdown, `fetchSockets` and `serverSideEmitWithAck` in another isolate could wait 5 seconds for it and then throw.
+- `RedisFormat` and `RedisRequestType` are now in `pub_sub_adapter.dart`, so it no longer imports the Redis and isolate adapters. The package exports them as before.
 
 ## 3.1.1
 
