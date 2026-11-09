@@ -1,3 +1,10 @@
+## 3.1.1
+
+- New: `IsolateAdapter` shares broadcasts, `socketsJoin`, `fetchSockets`, `serverSideEmit` and broadcast acks between the isolates of one Dox app, with no Redis. It uses `IsolateBus` of dox_core. Needs dox_core 3.1.3.
+- With many isolates and no `adapter`, `SocketIoProvider` now uses the `IsolateAdapter`. Before, it used the in-memory adapter, and a broadcast only reached the clients of the same isolate.
+- New: `PubSubAdapter`, the shared logic of the Redis and isolate adapters. Extend it to share over something else.
+- The adapter log lines are now `dox_socketio: publish failed` and `dox_socketio: bad adapter message` (were `redis publish failed` and `bad redis message`).
+
 ## 3.1.0
 
 - Fix: `handshake.token` reads the `Authorization` header with `bearer` in any case (`Bearer`, `bearer`, `BEARER`), like dox_auth. Before, only `Bearer` worked.

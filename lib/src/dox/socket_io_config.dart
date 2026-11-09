@@ -8,12 +8,13 @@ import '../server/namespace.dart';
 /// ```
 /// SocketIoConfig(
 ///   namespaces: [ChatNamespace()],
-///   adapter: RedisSocketAdapterFactory(), // needed with many isolates
+///   adapter: RedisSocketAdapterFactory(), // needed with many servers
 /// );
 /// ```
 ///
-/// Many isolates: each isolate has its own Socket.IO server. Use the Redis
-/// adapter so a broadcast reaches clients on every isolate. Clients must use
+/// Many isolates: each isolate has its own Socket.IO server. With no
+/// [adapter], the provider uses an `IsolateAdapter`, so a broadcast reaches
+/// clients on every isolate. Many servers need a Redis adapter. Clients must use
 /// `transports: ['websocket']`. HTTP long-polling sends many requests,
 /// and they can reach different isolates, so it needs `totalIsolate: 1`
 /// (or sticky sessions in front of many servers).
@@ -28,7 +29,8 @@ class SocketIoConfig {
   /// Namespaces to register, like `ChatNamespace()`.
   final List<NamespaceHandler> namespaces;
 
-  /// Makes the adapter in each isolate. Null means in memory (one isolate).
+  /// Makes the adapter in each isolate. Null means in memory with one
+  /// isolate, and `IsolateAdapter` with many.
   final SocketAdapterFactory? adapter;
 
   const SocketIoConfig({

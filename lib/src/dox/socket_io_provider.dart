@@ -1,5 +1,6 @@
 import 'package:dox_core/dox_core.dart';
 
+import '../adapter/isolate_adapter.dart';
 import '../engine/origin_check.dart';
 import '../server/namespace.dart';
 import '../server/socket_io_server.dart';
@@ -32,23 +33,27 @@ class SocketIoProvider extends DoxProvider {
       originWarningDone = true;
       sessionOriginWarningDone = true;
     }
+    int isolates = Dox().isolateCount;
+    // Many isolates: share broadcasts between them, like one server.
+    SocketAdapterFactory? adapter =
+        config.adapter ??
+        (isolates > 1 ? const IsolateSocketAdapterFactory() : null);
     SocketIoServer io = SocketIoServer(
       options: config.options,
-      adapter: config.adapter?.create(),
+      adapter: adapter?.create(),
     );
     for (NamespaceHandler handler in config.namespaces) {
       io.register(handler);
     }
     server = io;
     Route.mount(config.options.path, io.handle);
-    AppConfig app = Dox().config;
     if (Dox().isolateId == 1 &&
-        app.totalIsolate > 1 &&
+        isolates > 1 &&
         config.options.transports.contains('polling')) {
       Logger.info(
-        'Socket.IO runs on ${app.totalIsolate} isolates: '
+        'Socket.IO runs on $isolates isolates: '
         "clients should use transports: ['websocket'] (long-polling needs "
-        'one isolate or sticky sessions), with a Redis adapter.',
+        'one isolate or sticky sessions).',
       );
     }
   }

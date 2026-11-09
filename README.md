@@ -102,7 +102,7 @@ static Future<User?> findUser(Handshake handshake) async {
 - Engine.IO protocol v4 and Socket.IO protocol v5 (the protocols of Socket.IO v4).
 - Polling and websocket transports, upgrade, heartbeat and CORS.
 - Namespaces (also as classes), middleware, rooms, broadcast, acks and binary data.
-- In-memory adapter, and a Redis adapter for many servers.
+- In-memory adapter, an isolate adapter for the isolates of one Dox app (no Redis, the default with many isolates), and a Redis adapter for many servers.
 - The Redis adapter uses the message format of `@socket.io/redis-adapter`. Dox and Node.js servers can share one Redis.
 - `fetchSockets`, `socketsJoin`, `socketsLeave`, `disconnectSockets`, `serverSideEmit` and broadcast acks work across all servers.
 - `SocketIoEmitter` sends events from any Dart program, like `@socket.io/redis-emitter`.
