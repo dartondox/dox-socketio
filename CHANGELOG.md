@@ -1,3 +1,7 @@
+## Unreleased
+
+- Fix: a closed `IsolateAdapter` still answers the other isolates until its isolate leaves the bus. Before, during a shutdown, `fetchSockets` and `serverSideEmitWithAck` in another isolate could wait 5 seconds for it and then throw.
+
 ## 3.1.1
 
 - New: `IsolateAdapter` shares broadcasts, `socketsJoin`, `fetchSockets`, `serverSideEmit` and broadcast acks between the isolates of one Dox app, with no Redis. It uses `IsolateBus` of dox_core. Needs dox_core 3.1.3.

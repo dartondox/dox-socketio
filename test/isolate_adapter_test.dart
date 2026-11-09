@@ -21,6 +21,7 @@ Future<void> _serverB(List<Object> args) async {
   TestApp app = TestApp(adapter: IsolateAdapter());
   app.io.of('/').onServerSideEmit('ping', _pong);
   await app.start();
+  bool closed = false;
   ReceivePort commands = ReceivePort();
   commands.listen((dynamic command) async {
     switch (command) {
@@ -30,8 +31,13 @@ Future<void> _serverB(List<Object> args) async {
       case 'fetch':
         List<RemoteSocket> sockets = await app.io.fetchSockets();
         out.send(sockets.map(_id).toList());
-      case 'stop':
+      case 'close':
+        // close the server but stay on the bus, like during a shutdown
         await app.stop();
+        closed = true;
+        out.send('done');
+      case 'stop':
+        if (!closed) await app.stop();
         IsolateBus.instance.close();
         commands.close();
         out.send('done');
@@ -126,4 +132,13 @@ void main() {
       onA.dispose();
     },
   );
+  test('a closed server still answers until it leaves the bus', () async {
+    sio.Socket onA = await connectClient(serverA.url, 'room1');
+    await ask('close');
+    Stopwatch watch = Stopwatch()..start();
+    List<RemoteSocket> sockets = await serverA.io.fetchSockets();
+    expect(sockets, hasLength(1));
+    expect(watch.elapsed, lessThan(Duration(seconds: 2)));
+    onA.dispose();
+  });
 }
