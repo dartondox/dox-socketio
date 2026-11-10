@@ -30,22 +30,52 @@ class IsolateAdapter extends PubSubAdapter {
 
   StreamSubscription<Object?>? _listening;
 
+  /// bus -> the adapters of this isolate that listen and are not closed
+  static final Expando<Set<IsolateAdapter>> _live =
+      Expando<Set<IsolateAdapter>>();
+
+  /// bus -> the listen of the last closed adapter, if it still answers
+  static final Expando<StreamSubscription<Object?>> _closed =
+      Expando<StreamSubscription<Object?>>();
+
   /// One listen gets the messages of all namespaces; [onMessage] picks the
   /// namespace by the channel.
   @override
   Future<void> subscribe(Namespace nsp) async {
-    _listening ??= bus.on(busChannel).listen(_onBusMessage);
+    if (_listening != null) return;
+    Set<IsolateAdapter> live = _live[bus] ??= <IsolateAdapter>{};
+    // the bus closed: this adapter does not listen any more
+    void left() => live.remove(this);
+    _listening = bus.on(busChannel).listen(_onBusMessage, onDone: left);
+    live.add(this);
+    // this adapter answers now, so a closed one can stop
+    _stopClosed();
   }
 
-  /// Does not stop listening. The other isolates count this one until
-  /// it leaves the bus (when the isolate stops), so after [close] it
-  /// still answers them, with no sockets. Else their `fetchSockets` and
-  /// `serverSideEmitWithAck` wait for the timeout. The bus ends the
-  /// listen when it closes.
-  // ponytail: a closed adapter answers until the bus closes. Give the
-  // bus a per-channel leave if apps open and close many servers.
+  /// The other isolates count this one until it leaves the bus (when the
+  /// isolate stops). So the last closed adapter of an isolate keeps
+  /// answering them, with no sockets. Else their `fetchSockets` and
+  /// `serverSideEmitWithAck` wait for the timeout.
+  ///
+  /// It stops when another adapter of this isolate listens. So an app
+  /// that opens and closes many servers keeps at most one old listen.
   @override
-  Future<void> unsubscribe(Namespace nsp) async {}
+  Future<void> unsubscribe(Namespace nsp) async {
+    StreamSubscription<Object?>? listening = _listening;
+    if (listening == null || !(_live[bus]?.remove(this) ?? false)) return;
+    if (_live[bus]!.isNotEmpty) {
+      await listening.cancel();
+      return;
+    }
+    _stopClosed();
+    _closed[bus] = listening;
+  }
+
+  void _stopClosed() {
+    StreamSubscription<Object?>? closed = _closed[bus];
+    _closed[bus] = null;
+    unawaited(closed?.cancel());
+  }
 
   @override
   Future<void> publish(String channel, Uint8List message) async {

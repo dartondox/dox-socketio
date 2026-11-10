@@ -1,5 +1,6 @@
 ## Unreleased
 
+- Fix: a closed `IsolateAdapter` kept its bus listen until the isolate stopped. An app that opened and closed many servers in one isolate piled up listens, and each old one still got and answered messages. Now a closed adapter stops listening when another adapter of the isolate listens. Only the last closed one keeps answering, so the other isolates do not wait for the timeout.
 - Fix: a closed `IsolateAdapter` still answers the other isolates until its isolate leaves the bus. Before, during a shutdown, `fetchSockets` and `serverSideEmitWithAck` in another isolate could wait 5 seconds for it and then throw.
 - `RedisFormat` and `RedisRequestType` are now in `pub_sub_adapter.dart`, so it no longer imports the Redis and isolate adapters. The package exports them as before.
 
