@@ -43,8 +43,11 @@ class IsolateAdapter extends PubSubAdapter {
   @override
   Future<void> subscribe(Namespace nsp) async {
     if (_listening != null) return;
-    _listening = bus.on(busChannel).listen(_onBusMessage);
-    (_live[bus] ??= <IsolateAdapter>{}).add(this);
+    Set<IsolateAdapter> live = _live[bus] ??= <IsolateAdapter>{};
+    // the bus closed: this adapter does not listen any more
+    void left() => live.remove(this);
+    _listening = bus.on(busChannel).listen(_onBusMessage, onDone: left);
+    live.add(this);
     // this adapter answers now, so a closed one can stop
     _stopClosed();
   }
