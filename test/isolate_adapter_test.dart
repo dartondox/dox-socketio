@@ -3,6 +3,7 @@ library;
 
 import 'dart:async';
 import 'dart:isolate';
+import 'dart:typed_data';
 
 import 'package:dox_core/dox_core.dart';
 import 'package:dox_socketio/dox_socketio.dart';
@@ -49,6 +50,27 @@ Future<void> _serverB(List<Object> args) async {
 String _id(RemoteSocket socket) => socket.id;
 
 void _pong(ServerSideEvent event) => event.ack('pong from B');
+
+/// Counts the bus messages it gets.
+class _CountingAdapter extends IsolateAdapter {
+  int got = 0;
+
+  @override
+  void onMessage(String channel, Uint8List message) {
+    got++;
+    super.onMessage(channel, message);
+  }
+}
+
+int _got(_CountingAdapter adapter) => adapter.got;
+
+Future<_CountingAdapter> _openAndClose() async {
+  _CountingAdapter adapter = _CountingAdapter();
+  TestApp app = TestApp(adapter: adapter);
+  await app.start();
+  await app.stop();
+  return adapter;
+}
 
 void main() {
   late TestApp serverA;
@@ -140,5 +162,33 @@ void main() {
     expect(sockets, hasLength(1));
     expect(watch.elapsed, lessThan(Duration(seconds: 2)));
     onA.dispose();
+  });
+
+  test('closed adapters stop listening, so listens do not pile up', () async {
+    // serverA listens, so a closed adapter stops at once
+    List<_CountingAdapter> closed = <_CountingAdapter>[];
+    for (int i = 0; i < 3; i++) {
+      closed.add(await _openAndClose());
+    }
+    await ask('emit');
+    await settle();
+    expect(closed.map(_got), <int>[0, 0, 0]);
+
+    // with no open adapter, only the last closed one still answers
+    await serverA.stop();
+    closed.clear();
+    for (int i = 0; i < 3; i++) {
+      closed.add(await _openAndClose());
+    }
+    await ask('emit');
+    await settle();
+    expect(closed.map(_got), <int>[0, 0, 1]);
+
+    // a new adapter takes over, and the closed one stops
+    serverA = TestApp(adapter: IsolateAdapter());
+    await serverA.start();
+    await ask('emit');
+    await settle();
+    expect(closed.map(_got), <int>[0, 0, 1]);
   });
 }
