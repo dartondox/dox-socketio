@@ -33,11 +33,16 @@ class SocketIoConfig {
   /// isolate, and `IsolateAdapter` with many.
   final SocketAdapterFactory? adapter;
 
+  /// Turns on `Broadcast` on the `/` namespace: clients can `subscribe`
+  /// to channels, and `Broadcast.event` sends to them. Off by default.
+  final bool broadcasting;
+
   const SocketIoConfig({
     this.enabled = true,
     this.options = const ServerOptions(),
     this.namespaces = const <NamespaceHandler>[],
     this.adapter,
+    this.broadcasting = false,
   });
 }
 
