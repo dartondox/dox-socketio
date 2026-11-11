@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import '../constants/engine_constants.dart';
+import 'engine_request.dart';
 import 'origin_check.dart';
 
 /// CORS settings for the HTTP long-polling requests.
@@ -35,6 +38,10 @@ class CorsOptions {
   bool allows(String origin) => originInList(origin, origins);
 }
 
+/// Decides if a handshake or a websocket upgrade may go on. Return true to
+/// allow it. See [ServerOptions.allowRequest].
+typedef AllowRequest = FutureOr<bool> Function(EngineRequest request);
+
 /// Options of the Engine.IO and Socket.IO server.
 class ServerOptions {
   const ServerOptions({
@@ -49,6 +56,8 @@ class ServerOptions {
     this.allowUpgrades = true,
     this.cors,
     this.allowedOrigins,
+    this.allowRequest,
+    this.maxSessions,
   });
 
   /// URL path the server listens on. Must end with `/`.
@@ -99,4 +108,30 @@ class ServerOptions {
   /// Other origins get 403. A client with no `Origin` header (not a
   /// browser) is always allowed. [cors] still sets the CORS headers.
   final List<String>? allowedOrigins;
+
+  /// Runs for every handshake and every websocket upgrade, before a
+  /// session is made or upgraded. It runs after the `Origin` check.
+  ///
+  /// Return false (or a future of false) to refuse the request. The client
+  /// gets 403 with the Engine.IO error `{"code":4,"message":"Forbidden"}`,
+  /// like `allowRequest` of the Node `engine.io` server. When the function
+  /// throws, the request is refused the same way and the error is written
+  /// to stderr.
+  ///
+  /// Requests of an open session (polling) do not run it again.
+  /// Null (the default) allows every request.
+  final AllowRequest? allowRequest;
+
+  /// Most open Engine.IO sessions on this server. Null (the default) means
+  /// no limit.
+  ///
+  /// When the limit is reached, a new handshake gets 503 with the
+  /// Engine.IO error `{"code":3,"message":"Too many sessions"}`. Requests
+  /// of open sessions still work. A slot is free again when a session
+  /// closes.
+  ///
+  /// The count is per isolate. With many isolates, each isolate has its own
+  /// server and its own count, so the whole app allows up to
+  /// `maxSessions` times the number of isolates.
+  final int? maxSessions;
 }

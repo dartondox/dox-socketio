@@ -46,6 +46,10 @@ class EngineServer implements EngineSessionStore {
   final HttpResponder _responder;
   final Map<String, EngineSocket> _sessions = <String, EngineSocket>{};
 
+  /// Websocket handshakes that passed the [ServerOptions.maxSessions]
+  /// check but are not in [_sessions] yet.
+  int _opening = 0;
+
   /// Number of open sessions.
   int get clientsCount => _sessions.length;
 
@@ -94,6 +98,10 @@ class EngineServer implements EngineSessionStore {
       return;
     }
     if (isWebsocket) {
+      if (!await _requestAllowed(request)) {
+        _responder.error(response, EngineError.forbidden);
+        return;
+      }
       await _upgrade(request, session);
       return;
     }
@@ -111,9 +119,31 @@ class EngineServer implements EngineSessionStore {
       return;
     }
     EngineRequest info = EngineRequest.fromHttpRequest(request);
+    if (!await _requestAllowed(request, info)) {
+      _responder.error(request.response, EngineError.forbidden);
+      return;
+    }
+    // Checked after the hook, because an async hook lets other
+    // handshakes in.
+    int? maxSessions = options.maxSessions;
+    if (maxSessions != null && _sessions.length + _opening >= maxSessions) {
+      _responder.error(
+        request.response,
+        EngineError.badRequest,
+        status: HttpStatus.serviceUnavailable,
+        message: 'Too many sessions',
+      );
+      return;
+    }
     Transport transport;
     if (isWebsocket) {
-      WebSocket socket = await _upgradeSocket(request);
+      _opening++;
+      WebSocket socket;
+      try {
+        socket = await _upgradeSocket(request);
+      } finally {
+        _opening--;
+      }
       transport = WebsocketTransport(
         socket,
         maxHttpBufferSize: options.maxHttpBufferSize,
@@ -147,6 +177,22 @@ class EngineServer implements EngineSessionStore {
     session.maybeUpgrade(
       WebsocketTransport(socket, maxHttpBufferSize: options.maxHttpBufferSize),
     );
+  }
+
+  /// Runs [ServerOptions.allowRequest]. A hook that throws refuses the
+  /// request.
+  Future<bool> _requestAllowed(
+    HttpRequest request, [
+    EngineRequest? info,
+  ]) async {
+    AllowRequest? allow = options.allowRequest;
+    if (allow == null) return true;
+    try {
+      return await allow(info ?? EngineRequest.fromHttpRequest(request));
+    } catch (error, stack) {
+      stderr.writeln('dox_socketio: allowRequest error: $error\n$stack');
+      return false;
+    }
   }
 
   /// Compression is off. A small compressed message could grow very big

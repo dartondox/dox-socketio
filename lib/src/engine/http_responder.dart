@@ -27,16 +27,23 @@ class HttpResponder {
     }
   }
 
-  /// Sends an Engine.IO error as JSON.
-  void error(HttpResponse response, EngineError error) {
+  /// Sends an Engine.IO error as JSON. [status] and [message] replace the
+  /// default status and message of [error].
+  void error(
+    HttpResponse response,
+    EngineError error, {
+    int? status,
+    String? message,
+  }) {
     send(
       response,
-      error == EngineError.forbidden
-          ? HttpStatus.forbidden
-          : HttpStatus.badRequest,
+      status ??
+          (error == EngineError.forbidden
+              ? HttpStatus.forbidden
+              : HttpStatus.badRequest),
       jsonEncode(<String, Object>{
         'code': error.code,
-        'message': error.message,
+        'message': message ?? error.message,
       }),
       contentType: 'application/json',
     );

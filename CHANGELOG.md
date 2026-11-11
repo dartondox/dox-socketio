@@ -1,5 +1,7 @@
 ## Unreleased
 
+- New: `ServerOptions(allowRequest:)`, a hook like `allowRequest` of the Node `engine.io` server. It runs for every handshake and websocket upgrade and gives true or false (sync or async). With false, the client gets 403 with the Engine.IO error code 4 (`Forbidden`). A hook that throws refuses the request too. Null (the default) allows all, like before.
+- New: `ServerOptions(maxSessions:)`, the most open Engine.IO sessions per isolate. At the limit, a new handshake gets 503 (`Too many sessions`). Open sessions keep working. Null (the default) means no limit, like before.
 - Fix: a closed `IsolateAdapter` kept its bus listen until the isolate stopped. An app that opened and closed many servers in one isolate piled up listens, and each old one still got and answered messages. Now a closed adapter stops listening when another adapter of the isolate listens. Only the last closed one keeps answering, so the other isolates do not wait for the timeout.
 - Fix: a closed `IsolateAdapter` still answers the other isolates until its isolate leaves the bus. Before, during a shutdown, `fetchSockets` and `serverSideEmitWithAck` in another isolate could wait 5 seconds for it and then throw.
 - `RedisFormat` and `RedisRequestType` are now in `pub_sub_adapter.dart`, so it no longer imports the Redis and isolate adapters. The package exports them as before.
