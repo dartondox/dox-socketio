@@ -313,7 +313,8 @@ void main() {
       sio.Socket alice = await client('alice');
       List<Object?> here = collect(alice, 'presence:subscribed');
       expect(await subscribe(alice, 'presence-chat.l'), ok);
-      await settle();
+      await waitFor(here, 1, 'presence:subscribed');
+      await settle(); // no second one
       expect(here, hasLength(1));
     });
 
@@ -335,7 +336,8 @@ void main() {
           .to(Broadcast.roomOf('presence-gatechat.t'))
           .fetchSockets();
       expect(inRoom, hasLength(1));
-      await settle();
+      await waitFor(here, 1, 'presence:subscribed');
+      await settle(); // no second one
       expect(here, hasLength(1));
     });
 
@@ -461,7 +463,8 @@ void main() {
       sio.Socket alice2 = await client('alice');
       Future<Object?> here = next(alice2, 'presence:subscribed');
       await subscribe(alice2, 'presence-chat.2');
-      await settle();
+      await waitFor(joining, 1, 'presence:joining');
+      await settle(); // no second one
       expect(joining, hasLength(1));
       expect((joining.single! as List<Object?>).last, <String, Object?>{
         'user_id': 1,
@@ -476,7 +479,7 @@ void main() {
       await settle();
       expect(leaving, isEmpty);
       expect(await unsubscribe(alice2, 'presence-chat.2'), ok);
-      await settle();
+      await waitFor(leaving, 1, 'presence:leaving');
       expect(leaving, hasLength(1));
       expect((leaving.single! as List<Object?>).first, 'presence-chat.2');
     });
@@ -493,7 +496,8 @@ void main() {
         subscribe(alice1, 'presence-chat.same'),
         subscribe(alice2, 'presence-chat.same'),
       ]);
-      await settle();
+      await waitFor(joining, 1, 'presence:joining');
+      await settle(); // no second one
       expect(joining, hasLength(1));
     });
 
@@ -523,7 +527,8 @@ void main() {
       List<Object?> notGot = collect(other, 'OrderShipped');
       await Broadcast.event(OrderShipped(1));
       await broadcast(OrderShipped(2));
-      await settle();
+      await waitFor(got, 1, 'OrderShipped');
+      await settle(); // nothing more, and nothing on the other socket
       expect(got, <Object?>[
         <Object?>[
           'private-orders.1',
@@ -541,7 +546,8 @@ void main() {
       List<Object?> gotA = collect(a, 'news.posted');
       List<Object?> gotB = collect(b, 'news.posted');
       await Broadcast.event(News(), toOthers: a.id);
-      await settle();
+      await waitFor(gotB, 1, 'news.posted on b');
+      await settle(); // nothing on a
       expect(gotA, isEmpty);
       expect(gotB, hasLength(1));
     });
@@ -675,13 +681,13 @@ void main() {
         List<Object?> members =
             (await here as List<Object?>).last as List<Object?>;
         expect(members.map(_userId).toSet(), <Object?>{1, 2});
-        await settle();
+        await waitFor(joining, 1, 'presence:joining');
+        await settle(); // no second one
         expect(joining, hasLength(1));
         List<Object?> got = collect(bob, 'news.posted');
         await subscribe(bob, 'news');
         await Broadcast.event(News());
-        await settle();
-        expect(got, hasLength(1));
+        await waitFor(got, 1, 'news.posted');
         Future<Object?> leaving = next(bob, 'presence:leaving');
         alice.dispose();
         expect(((await leaving)! as List<Object?>).first, 'presence-chat.r');
@@ -712,7 +718,9 @@ void main() {
         List<Object?> gotB = collect(b, 'news.posted');
         await Broadcast.event(News());
         await Broadcast.event(News(), toOthers: a.id);
-        await settle();
+        await waitFor(gotA, 1, 'news.posted on a');
+        await waitFor(gotB, 2, 'news.posted on b');
+        await settle(); // nothing more on a
         expect(gotA, hasLength(1));
         expect(gotB, hasLength(2));
       } finally {
@@ -728,7 +736,9 @@ void main() {
           adapter: newAdapter(
             RedisFormat.msgpack,
             'broadcast-dead',
-            const Duration(milliseconds: 300),
+            // well above a Redis round trip, below presenceTimeout (2 s)
+            // and the 5 s waits of the test
+            const Duration(seconds: 1),
           ),
         );
         io.use(MainNamespace().login);
@@ -786,3 +796,14 @@ String _sign(String body) => Hmac(
   sha256,
   KeyDerivation.forAppKey('dox:broadcast'),
 ).convert(utf8.encode(body)).toString();
+
+/// Waits until [list] has [length] items, for at most 5 seconds.
+Future<void> waitFor(List<Object?> list, int length, String what) async {
+  DateTime end = DateTime.now().add(const Duration(seconds: 5));
+  while (list.length < length) {
+    if (DateTime.now().isAfter(end)) {
+      fail('waited 5 s for $length $what, got ${list.length}: $list');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
