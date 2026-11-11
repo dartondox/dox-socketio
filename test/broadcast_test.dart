@@ -120,9 +120,18 @@ bool teamUser(Object? user, String team, String member) {
 
 bool throwingRule(Object? user) => throw StateError('db is down');
 
-Future<bool> slowRule(Object? user, String id) async {
-  await Future<void>.delayed(Duration(milliseconds: 200));
+/// The gated rules wait for it. A test closes it to hold a subscribe in
+/// progress, then opens it.
+Completer<void> gate = Completer<void>()..complete();
+
+Future<bool> gatedRule(Object? user, String id) async {
+  await gate.future;
   return true;
+}
+
+Future<Map<String, Object?>?> gatedMember(Object? user, String room) async {
+  await gate.future;
+  return chatMember(user, room);
 }
 
 String get baseUrl => 'http://127.0.0.1:${Dox().server.httpServer.port}';
@@ -171,7 +180,8 @@ void main() {
     Broadcast.channel('chat.{room}', chatMember);
     Broadcast.channel('teams.{team}.users.{user}', teamUser);
     Broadcast.channel('broken', throwingRule);
-    Broadcast.channel('slow.{id}', slowRule);
+    Broadcast.channel('slow.{id}', gatedRule);
+    Broadcast.channel('gatechat.{room}', gatedMember);
     // the provider listened already: this only sets the send target again
     Broadcast.listen(SocketIoProvider.server!.sockets);
   });
@@ -206,6 +216,7 @@ void main() {
     Broadcast.maxChannelsPerSocket = 100;
     Broadcast.presenceTimeout = const Duration(seconds: 2);
     Broadcast.reset();
+    if (!gate.isCompleted) gate.complete();
   });
 
   tearDownAll(() async {
@@ -309,14 +320,23 @@ void main() {
     test('the same channel twice at once joins once', () async {
       sio.Socket alice = await client('alice');
       List<Object?> here = collect(alice, 'presence:subscribed');
-      List<Object?> acks = await Future.wait(<Future<Object?>>[
-        subscribe(alice, 'presence-chat.t'),
-        subscribe(alice, 'presence-chat.t'),
-      ]);
-      expect(acks, unorderedEquals(<Object?>[ok, _err('already subscribing')]));
+      gate = Completer<void>();
+      // packets of one socket are handled in order: the first subscribe
+      // waits on the gate when the second one comes
+      Future<Object?> first = subscribe(alice, 'presence-gatechat.t');
+      expect(
+        await subscribe(alice, 'presence-gatechat.t'),
+        _err('already subscribing'),
+      );
+      gate.complete();
+      expect(await first, ok);
+      expect(await subscribe(alice, 'presence-gatechat.t'), ok);
+      List<RemoteSocket> inRoom = await SocketIoProvider.server!.sockets
+          .to(Broadcast.roomOf('presence-gatechat.t'))
+          .fetchSockets();
+      expect(inRoom, hasLength(1));
       await settle();
       expect(here, hasLength(1));
-      expect(await subscribe(alice, 'presence-chat.t'), ok);
     });
 
     test('channel name and channel count limits', () async {
@@ -336,8 +356,10 @@ void main() {
 
     test('unsubscribe cancels a subscribe that still runs', () async {
       sio.Socket alice = await client('alice');
+      gate = Completer<void>();
       Future<Object?> subscribed = subscribe(alice, 'private-slow.1');
       expect(await unsubscribe(alice, 'private-slow.1'), ok);
+      gate.complete();
       expect(await subscribed, _err('unsubscribed'));
       List<Object?> got = collect(alice, 'Slow');
       await Broadcast.event(Slow());
