@@ -120,9 +120,18 @@ bool teamUser(Object? user, String team, String member) {
 
 bool throwingRule(Object? user) => throw StateError('db is down');
 
-Future<bool> slowRule(Object? user, String id) async {
-  await Future<void>.delayed(Duration(milliseconds: 200));
+/// The gated rules wait for it. A test closes it to hold a subscribe in
+/// progress, then opens it.
+Completer<void> gate = Completer<void>()..complete();
+
+Future<bool> gatedRule(Object? user, String id) async {
+  await gate.future;
   return true;
+}
+
+Future<Map<String, Object?>?> gatedMember(Object? user, String room) async {
+  await gate.future;
+  return chatMember(user, room);
 }
 
 String get baseUrl => 'http://127.0.0.1:${Dox().server.httpServer.port}';
@@ -171,7 +180,8 @@ void main() {
     Broadcast.channel('chat.{room}', chatMember);
     Broadcast.channel('teams.{team}.users.{user}', teamUser);
     Broadcast.channel('broken', throwingRule);
-    Broadcast.channel('slow.{id}', slowRule);
+    Broadcast.channel('slow.{id}', gatedRule);
+    Broadcast.channel('gatechat.{room}', gatedMember);
     // the provider listened already: this only sets the send target again
     Broadcast.listen(SocketIoProvider.server!.sockets);
   });
@@ -206,6 +216,7 @@ void main() {
     Broadcast.maxChannelsPerSocket = 100;
     Broadcast.presenceTimeout = const Duration(seconds: 2);
     Broadcast.reset();
+    if (!gate.isCompleted) gate.complete();
   });
 
   tearDownAll(() async {
@@ -302,21 +313,32 @@ void main() {
       sio.Socket alice = await client('alice');
       List<Object?> here = collect(alice, 'presence:subscribed');
       expect(await subscribe(alice, 'presence-chat.l'), ok);
-      await settle();
+      await waitFor(here, 1, 'presence:subscribed');
+      await settle(); // no second one
       expect(here, hasLength(1));
     });
 
     test('the same channel twice at once joins once', () async {
       sio.Socket alice = await client('alice');
       List<Object?> here = collect(alice, 'presence:subscribed');
-      List<Object?> acks = await Future.wait(<Future<Object?>>[
-        subscribe(alice, 'presence-chat.t'),
-        subscribe(alice, 'presence-chat.t'),
-      ]);
-      expect(acks, unorderedEquals(<Object?>[ok, _err('already subscribing')]));
-      await settle();
+      gate = Completer<void>();
+      // packets of one socket are handled in order: the first subscribe
+      // waits on the gate when the second one comes
+      Future<Object?> first = subscribe(alice, 'presence-gatechat.t');
+      expect(
+        await subscribe(alice, 'presence-gatechat.t'),
+        _err('already subscribing'),
+      );
+      gate.complete();
+      expect(await first, ok);
+      expect(await subscribe(alice, 'presence-gatechat.t'), ok);
+      List<RemoteSocket> inRoom = await SocketIoProvider.server!.sockets
+          .to(Broadcast.roomOf('presence-gatechat.t'))
+          .fetchSockets();
+      expect(inRoom, hasLength(1));
+      await waitFor(here, 1, 'presence:subscribed');
+      await settle(); // no second one
       expect(here, hasLength(1));
-      expect(await subscribe(alice, 'presence-chat.t'), ok);
     });
 
     test('channel name and channel count limits', () async {
@@ -336,8 +358,10 @@ void main() {
 
     test('unsubscribe cancels a subscribe that still runs', () async {
       sio.Socket alice = await client('alice');
+      gate = Completer<void>();
       Future<Object?> subscribed = subscribe(alice, 'private-slow.1');
       expect(await unsubscribe(alice, 'private-slow.1'), ok);
+      gate.complete();
       expect(await subscribed, _err('unsubscribed'));
       List<Object?> got = collect(alice, 'Slow');
       await Broadcast.event(Slow());
@@ -439,7 +463,8 @@ void main() {
       sio.Socket alice2 = await client('alice');
       Future<Object?> here = next(alice2, 'presence:subscribed');
       await subscribe(alice2, 'presence-chat.2');
-      await settle();
+      await waitFor(joining, 1, 'presence:joining');
+      await settle(); // no second one
       expect(joining, hasLength(1));
       expect((joining.single! as List<Object?>).last, <String, Object?>{
         'user_id': 1,
@@ -454,7 +479,7 @@ void main() {
       await settle();
       expect(leaving, isEmpty);
       expect(await unsubscribe(alice2, 'presence-chat.2'), ok);
-      await settle();
+      await waitFor(leaving, 1, 'presence:leaving');
       expect(leaving, hasLength(1));
       expect((leaving.single! as List<Object?>).first, 'presence-chat.2');
     });
@@ -471,7 +496,8 @@ void main() {
         subscribe(alice1, 'presence-chat.same'),
         subscribe(alice2, 'presence-chat.same'),
       ]);
-      await settle();
+      await waitFor(joining, 1, 'presence:joining');
+      await settle(); // no second one
       expect(joining, hasLength(1));
     });
 
@@ -501,7 +527,8 @@ void main() {
       List<Object?> notGot = collect(other, 'OrderShipped');
       await Broadcast.event(OrderShipped(1));
       await broadcast(OrderShipped(2));
-      await settle();
+      await waitFor(got, 1, 'OrderShipped');
+      await settle(); // nothing more, and nothing on the other socket
       expect(got, <Object?>[
         <Object?>[
           'private-orders.1',
@@ -519,7 +546,8 @@ void main() {
       List<Object?> gotA = collect(a, 'news.posted');
       List<Object?> gotB = collect(b, 'news.posted');
       await Broadcast.event(News(), toOthers: a.id);
-      await settle();
+      await waitFor(gotB, 1, 'news.posted on b');
+      await settle(); // nothing on a
       expect(gotA, isEmpty);
       expect(gotB, hasLength(1));
     });
@@ -653,13 +681,13 @@ void main() {
         List<Object?> members =
             (await here as List<Object?>).last as List<Object?>;
         expect(members.map(_userId).toSet(), <Object?>{1, 2});
-        await settle();
+        await waitFor(joining, 1, 'presence:joining');
+        await settle(); // no second one
         expect(joining, hasLength(1));
         List<Object?> got = collect(bob, 'news.posted');
         await subscribe(bob, 'news');
         await Broadcast.event(News());
-        await settle();
-        expect(got, hasLength(1));
+        await waitFor(got, 1, 'news.posted');
         Future<Object?> leaving = next(bob, 'presence:leaving');
         alice.dispose();
         expect(((await leaving)! as List<Object?>).first, 'presence-chat.r');
@@ -690,7 +718,9 @@ void main() {
         List<Object?> gotB = collect(b, 'news.posted');
         await Broadcast.event(News());
         await Broadcast.event(News(), toOthers: a.id);
-        await settle();
+        await waitFor(gotA, 1, 'news.posted on a');
+        await waitFor(gotB, 2, 'news.posted on b');
+        await settle(); // nothing more on a
         expect(gotA, hasLength(1));
         expect(gotB, hasLength(2));
       } finally {
@@ -706,7 +736,9 @@ void main() {
           adapter: newAdapter(
             RedisFormat.msgpack,
             'broadcast-dead',
-            const Duration(milliseconds: 300),
+            // well above a Redis round trip, below presenceTimeout (2 s)
+            // and the 5 s waits of the test
+            const Duration(seconds: 1),
           ),
         );
         io.use(MainNamespace().login);
@@ -764,3 +796,14 @@ String _sign(String body) => Hmac(
   sha256,
   KeyDerivation.forAppKey('dox:broadcast'),
 ).convert(utf8.encode(body)).toString();
+
+/// Waits until [list] has [length] items, for at most 5 seconds.
+Future<void> waitFor(List<Object?> list, int length, String what) async {
+  DateTime end = DateTime.now().add(const Duration(seconds: 5));
+  while (list.length < length) {
+    if (DateTime.now().isAfter(end)) {
+      fail('waited 5 s for $length $what, got ${list.length}: $list');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
