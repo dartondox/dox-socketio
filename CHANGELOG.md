@@ -6,9 +6,12 @@
   - Clients emit `subscribe` with `{channel, auth?}` and `unsubscribe` with `{channel}`. Both answer an ack: `{ok: true}` or `{ok: false, error}`.
   - A private or presence channel needs a logged-in socket (`SocketAuth`) and a passing rule, or a token from the HTTP auth endpoint.
   - `Broadcast.routes(path:, middleware:)` adds `POST /broadcasting/auth`. It runs the rule with `req.auth` and answers `{auth: token}`, or 403. The token is signed with HMAC-SHA256 and a key made from `APP_KEY`, and is valid for one socket, one channel and `Broadcast.tokenLifetime` (1 minute).
-  - Presence channels send `presence:subscribed`, `presence:joining` and `presence:leaving`, like Laravel Echo. A user with many sockets is one member. It works across isolates and servers with the adapters.
+  - Presence channels send `presence:subscribed`, `presence:joining` and `presence:leaving`, like Laravel Echo. A user with many sockets is one member. It works across isolates and servers with the adapters. When a server does not answer, a presence `subscribe` is refused and a leave still sends `presence:leaving`.
   - `ShouldBroadcast` (`broadcastOn`, `broadcastAs`, `broadcastWith`), `Broadcast.event(event, toOthers:)` and `broadcast(event)` send events to the channels. `Broadcast.socketId(req)` reads `X-Socket-ID`. With no Socket.IO server (a queue worker), set `Broadcast.emitter` to a `SocketIoEmitter`.
   - `Broadcast.fake()` keeps the events for tests, with `assertBroadcasted`, `assertBroadcastedOn`, `assertBroadcastedTimes`, `assertNotBroadcasted` and `assertNothingBroadcasted`.
+  - Limits: `Broadcast.maxChannelLength` (200) and `Broadcast.maxChannelsPerSocket` (100). The auth endpoint answers 403 for a `socket_id` that is not a Socket.IO id.
+  - `Broadcast.reset()` forgets the rules, the send target and the emitter, for tests.
+  - The event names follow Laravel Echo. The auth does not: the client sends the token from the auth endpoint in its own `subscribe`.
 - `crypto` is now a direct dependency (it was already used through dox_core).
 - New: `ServerOptions(allowRequest:)`, a hook like `allowRequest` of the Node `engine.io` server. It runs for every handshake and websocket upgrade and gives true or false (sync or async). With false, the client gets 403 with the Engine.IO error code 4 (`Forbidden`). A hook that throws refuses the request too. Null (the default) allows all, like before.
 - New: `ServerOptions(maxSessions:)`, the most open Engine.IO sessions per isolate. At the limit, a new handshake gets 503 (`Too many sessions`). Open sessions keep working. Null (the default) means no limit, like before.

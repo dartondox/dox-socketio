@@ -4,14 +4,23 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart' show Hmac, sha256;
 import 'package:dox_core/dox_core.dart';
 import 'package:dox_socketio/dox_socketio.dart';
 import 'package:http/http.dart' as http;
+import 'package:ioredis/ioredis.dart';
 import 'package:socket_io_client/socket_io_client.dart' as sio;
 import 'package:test/test.dart';
 
 import 'redis_adapter_test.dart'
-    show collect, connectClient, newAdapter, next, redisSkipReason, settle;
+    show
+        collect,
+        connectClient,
+        newAdapter,
+        next,
+        redisOptions,
+        redisSkipReason,
+        settle;
 
 Map<String, Map<String, Object?>> users = <String, Map<String, Object?>>{
   'alice': <String, Object?>{'id': 1, 'name': 'Alice'},
@@ -147,11 +156,16 @@ void main() {
     return socket;
   }
 
-  setUpAll(() async {
+  setUp(() {
     Broadcast.channel('orders.{id}', ownsOrder);
     Broadcast.channel('chat.{room}', chatMember);
     Broadcast.channel('teams.{team}.users.{user}', teamUser);
     Broadcast.channel('broken', throwingRule);
+    // the provider listened already: this only sets the send target again
+    Broadcast.listen(SocketIoProvider.server!.sockets);
+  });
+
+  setUpAll(() async {
     Dox().initialize(
       AppConfig(
         appKey: '4HyiSrq4N5Nfg6bOadIhbFEI8zbUkpxt',
@@ -177,7 +191,9 @@ void main() {
     }
     clients.clear();
     Broadcast.tokenLifetime = const Duration(minutes: 1);
-    Broadcast.restore();
+    Broadcast.maxChannelLength = 200;
+    Broadcast.maxChannelsPerSocket = 100;
+    Broadcast.reset();
   });
 
   tearDownAll(() async {
@@ -269,6 +285,57 @@ void main() {
       expect(await subscribe(alice, 'presence-chat.closed'), refused);
     });
 
+    test('a second listen on one namespace adds no handler', () async {
+      Broadcast.listen(SocketIoProvider.server!.sockets);
+      sio.Socket alice = await client('alice');
+      List<Object?> here = collect(alice, 'presence:subscribed');
+      expect(await subscribe(alice, 'presence-chat.l'), ok);
+      await settle();
+      expect(here, hasLength(1));
+    });
+
+    test('the same channel twice at once joins once', () async {
+      sio.Socket alice = await client('alice');
+      List<Object?> here = collect(alice, 'presence:subscribed');
+      List<Object?> acks = await Future.wait(<Future<Object?>>[
+        subscribe(alice, 'presence-chat.t'),
+        subscribe(alice, 'presence-chat.t'),
+      ]);
+      expect(acks, unorderedEquals(<Object?>[ok, _err('already subscribing')]));
+      await settle();
+      expect(here, hasLength(1));
+      expect(await subscribe(alice, 'presence-chat.t'), ok);
+    });
+
+    test('channel name and channel count limits', () async {
+      Broadcast.maxChannelLength = 10;
+      Broadcast.maxChannelsPerSocket = 2;
+      sio.Socket guest = await client();
+      expect(
+        await subscribe(guest, 'a' * 11),
+        _err('channel name is too long'),
+      );
+      expect(await subscribe(guest, 'a' * 10), ok);
+      expect(await subscribe(guest, 'b'), ok);
+      expect(await subscribe(guest, 'c'), _err('too many channels'));
+      expect(await unsubscribe(guest, 'b'), ok);
+      expect(await subscribe(guest, 'c'), ok);
+    });
+
+    test('a channel that is not a string gets an error', () async {
+      sio.Socket guest = await client();
+      Completer<Object?> done = Completer<Object?>();
+      guest.emitWithAck('subscribe', <String, Object>{
+        'channel': 5,
+      }, ack: done.complete);
+      expect(await done.future, _err('channel is missing'));
+    });
+
+    test('unsubscribe of a channel never joined is ok', () async {
+      sio.Socket alice = await client('alice');
+      expect(await unsubscribe(alice, 'presence-chat.never'), ok);
+    });
+
     test('a missing channel gets an error', () async {
       sio.Socket guest = await client();
       Completer<Object?> done = Completer<Object?>();
@@ -315,6 +382,20 @@ void main() {
       expect(await subscribe(guest, 'private-orders.9', token), refused);
     });
 
+    test('malformed tokens are refused', () async {
+      sio.Socket guest = await client();
+      String signed(String body) => '$body.${_sign(body)}';
+      String b64(String text) => base64Url.encode(utf8.encode(text));
+      for (String token in <String>[
+        'nodot',
+        signed('!!not base64!!'),
+        signed(b64('not json')),
+        signed(b64('[1, 2]')),
+      ]) {
+        expect(await subscribe(guest, 'private-orders.9', token), refused);
+      }
+    });
+
     test('a presence token needs a member', () async {
       sio.Socket guest = await client();
       String plain = Broadcast.authToken(guest.id!, 'presence-chat.1');
@@ -352,6 +433,38 @@ void main() {
       await settle();
       expect(leaving, hasLength(1));
       expect((leaving.single! as List<Object?>).first, 'presence-chat.2');
+    });
+  });
+
+  group('presence more', () {
+    test('two sockets of one user at the same time: one joining', () async {
+      sio.Socket bob = await client('bob');
+      await subscribe(bob, 'presence-chat.same');
+      List<Object?> joining = collect(bob, 'presence:joining');
+      sio.Socket alice1 = await client('alice');
+      sio.Socket alice2 = await client('alice');
+      await Future.wait(<Future<Object?>>[
+        subscribe(alice1, 'presence-chat.same'),
+        subscribe(alice2, 'presence-chat.same'),
+      ]);
+      await settle();
+      expect(joining, hasLength(1));
+    });
+
+    test('a disconnect sends presence:leaving', () async {
+      sio.Socket bob = await client('bob');
+      sio.Socket alice = await client('alice');
+      await subscribe(bob, 'presence-chat.d');
+      await subscribe(alice, 'presence-chat.d');
+      Future<Object?> leaving = next(bob, 'presence:leaving');
+      alice.dispose();
+      expect((await leaving)! as List<Object?>, <Object?>[
+        'presence-chat.d',
+        <String, Object?>{
+          'user_id': 1,
+          'user_info': <String, Object?>{'id': 1, 'name': 'Alice'},
+        },
+      ]);
     });
   });
 
@@ -436,6 +549,17 @@ void main() {
       expect(members.map(_userId), <Object?>[2]);
     });
 
+    test('403 for a socket_id that is not a Socket.IO id', () async {
+      expect(
+        (await auth('alice', 'bad id!', 'private-orders.1')).statusCode,
+        403,
+      );
+      expect(
+        (await auth('alice', 'a' * 21, 'private-orders.1')).statusCode,
+        403,
+      );
+    });
+
     test('403 for a refused or guest user', () async {
       expect((await auth('bob', 'sid', 'private-orders.1')).statusCode, 403);
       expect((await auth(null, 'sid', 'private-orders.1')).statusCode, 403);
@@ -470,7 +594,6 @@ void main() {
     });
   });
 
-  // Runs last: Broadcast.listen moves the send target to server B.
   group('two servers over redis', () {
     test('presence joins and member list cross servers', () async {
       // own key: servers of other test files do not answer requests
@@ -521,9 +644,99 @@ void main() {
         await b.close();
       }
     });
+
+    test('emitter sends with no listen, toOthers skips one', () async {
+      SocketIoServer io = SocketIoServer(
+        adapter: newAdapter(RedisFormat.msgpack, 'broadcast-emit'),
+      );
+      io.use(MainNamespace().login);
+      Broadcast.listen(io.sockets);
+      String url = 'http://127.0.0.1:${(await io.listen(0)).port}';
+      Redis redis = Redis(redisOptions);
+      try {
+        Broadcast.reset();
+        expect(() => Broadcast.event(News()), throwsStateError);
+        Broadcast.emitter = SocketIoEmitter(redis, key: 'broadcast-emit');
+        sio.Socket a = await connectClient(url, '');
+        sio.Socket b = await connectClient(url, '');
+        clients.addAll(<sio.Socket>[a, b]);
+        await subscribe(a, 'news');
+        await subscribe(b, 'news');
+        List<Object?> gotA = collect(a, 'news.posted');
+        List<Object?> gotB = collect(b, 'news.posted');
+        await Broadcast.event(News());
+        await Broadcast.event(News(), toOthers: a.id);
+        await settle();
+        expect(gotA, hasLength(1));
+        expect(gotB, hasLength(2));
+      } finally {
+        await redis.disconnect();
+        await io.close();
+      }
+    });
+
+    test(
+      'a server that does not answer: no join, leaving still sent',
+      () async {
+        SocketIoServer io = SocketIoServer(
+          adapter: newAdapter(
+            RedisFormat.msgpack,
+            'broadcast-dead',
+            const Duration(milliseconds: 300),
+          ),
+        );
+        io.use(MainNamespace().login);
+        Broadcast.listen(io.sockets);
+        String url = 'http://127.0.0.1:${(await io.listen(0)).port}';
+        Redis dead = Redis(redisOptions);
+        try {
+          sio.Socket bob = await connectClient(
+            url,
+            '',
+            auth: <String, String>{'token': 'bob'},
+          );
+          sio.Socket alice = await connectClient(
+            url,
+            '',
+            auth: <String, String>{'token': 'alice'},
+          );
+          clients.addAll(<sio.Socket>[bob, alice]);
+          expect(await subscribe(bob, 'presence-chat.x'), ok);
+          expect(await subscribe(alice, 'presence-chat.x'), ok);
+          // a peer that counts as a server but never answers
+          await dead.subscribe('broadcast-dead-request#/#');
+          sio.Socket carol = await connectClient(
+            url,
+            '',
+            auth: <String, String>{'token': 'bob'},
+          );
+          clients.add(carol);
+          expect(
+            await subscribe(carol, 'presence-chat.y'),
+            _err('presence is not available'),
+          );
+          Future<Object?> leaving = next(bob, 'presence:leaving');
+          expect(await unsubscribe(alice, 'presence-chat.x'), ok);
+          expect(((await leaving)! as List<Object?>).first, 'presence-chat.x');
+        } finally {
+          await dead.disconnect();
+          await io.close();
+        }
+      },
+    );
   }, skip: redisSkipReason());
 }
 
 Object? _userId(Object? member) => (member! as Map<String, Object?>)['user_id'];
 
 bool _isFour(OrderShipped event) => event.id == 4;
+
+Map<String, Object> _err(String message) => <String, Object>{
+  'ok': false,
+  'error': message,
+};
+
+String _sign(String body) => Hmac(
+  sha256,
+  KeyDerivation.forAppKey('dox:broadcast'),
+).convert(utf8.encode(body)).toString();

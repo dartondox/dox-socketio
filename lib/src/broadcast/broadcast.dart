@@ -72,7 +72,9 @@ Future<void> broadcast(ShouldBroadcast event, {String? toOthers}) =>
 /// and the sending of [ShouldBroadcast] events. Like `Broadcast` in
 /// Laravel, on Socket.IO only.
 ///
-/// The wire protocol fits Laravel Echo's Socket.IO connector:
+/// The event names follow Laravel Echo's Socket.IO connector. The auth
+/// does not: the client gets a token from [authenticate] and sends it in
+/// `subscribe` itself.
 /// - client -> server: `subscribe` with `{channel, auth?}`, and
 ///   `unsubscribe` with `{channel}`. Both answer an ack with
 ///   `{ok: true}` or `{ok: false, error}`.
@@ -95,6 +97,12 @@ class Broadcast {
   /// Use `.of('/name')` when [listen] got a namespace that is not `/`.
   static SocketIoEmitter? emitter;
 
+  /// The longest channel name a socket may subscribe to.
+  static int maxChannelLength = 200;
+
+  /// The most channels one socket may be subscribed to.
+  static int maxChannelsPerSocket = 100;
+
   /// The key of the presence members in `socket.data`.
   static const String presenceKey = 'broadcast_presence';
 
@@ -105,6 +113,19 @@ class Broadcast {
   static Namespace? _nsp;
   static BroadcastFake? _fake;
 
+  /// Namespaces that [listen] already set up.
+  static final Expando<bool> _listening = Expando<bool>();
+
+  /// Channels each socket is subscribing to now (the rule still runs).
+  static final Expando<Set<String>> _pending = Expando<Set<String>>();
+
+  /// The last presence join or leave of each channel. They run one after
+  /// another in this isolate, so "first socket of this user" is right.
+  static final Map<String, Future<void>> _locks = <String, Future<void>>{};
+
+  /// A Socket.IO id: 20 url-safe base64 characters (see `IdGenerator`).
+  static final RegExp _socketId = RegExp(r'^[A-Za-z0-9_-]{20}$');
+
   /// Adds the rule for private and presence channels that match
   /// [pattern]. The pattern has no `private-` or `presence-` prefix. A
   /// `{name}` part matches any text with no dot. [rule] gets the user,
@@ -113,6 +134,10 @@ class Broadcast {
   /// For a private channel it gives true to allow. For a presence
   /// channel it gives the member info (a map, with an `id`) to allow.
   /// Null, false or a throw refuses. It can be async.
+  ///
+  /// One rule serves both kinds: `orders.{id}` checks `private-orders.1`
+  /// and `presence-orders.1`. When many patterns match, the first one
+  /// added wins.
   /// ```
   /// Broadcast.channel('orders.{id}', (Object? user, String id) async {
   ///   Order? order = await Order().find(id);
@@ -129,10 +154,23 @@ class Broadcast {
 
   /// Turns on `subscribe` and `unsubscribe` for the sockets of [nsp], and
   /// sends [event]s through it. `SocketIoConfig(broadcasting: true)`
-  /// calls it for `/`. Call it once per isolate.
+  /// calls it for `/`. A second call for the same namespace only makes it
+  /// the send target again.
   static void listen(Namespace nsp) {
     _nsp = nsp;
+    if (_listening[nsp] == true) return;
+    _listening[nsp] = true;
     nsp.onConnection(_onConnection);
+  }
+
+  /// For tests: forgets the rules, the send target of [listen], the
+  /// [emitter] and the fake. Sockets of a namespace that [listen] got can
+  /// still subscribe.
+  static void reset() {
+    _rules.clear();
+    _nsp = null;
+    emitter = null;
+    _fake = null;
   }
 
   /// Registers `POST [path]`, the HTTP auth endpoint (see
@@ -149,20 +187,27 @@ class Broadcast {
 
   /// The handler of the HTTP auth endpoint. It reads `socket_id` and
   /// `channel_name`, runs the channel rule with the user of the request
-  /// (`req.auth`) and answers `{auth: token}`. A refused user gets 403.
+  /// (`req.auth`) and answers `{auth: token}`. A refused user, or a
+  /// `socket_id` that is not a Socket.IO id, gets 403.
   /// The client sends the token with `subscribe`: `{channel, auth}`.
   static Future<Map<String, String>> authenticate(DoxRequest req) async {
-    String socketId = '${req.input('socket_id') ?? ''}';
-    String channel = '${req.input('channel_name') ?? ''}';
+    Object? socketId = req.input('socket_id');
+    Object? channel = req.input('channel_name');
     IAuth? auth = req.auth;
-    Object? result = socketId.isEmpty || channel.isEmpty
+    Object? result =
+        socketId is! String ||
+            !_socketId.hasMatch(socketId) ||
+            channel is! String ||
+            channel.isEmpty
         ? null
         : await authorize(auth?.user<Object>(), channel);
     if (result == null) throw ForbiddenHttpException();
     Map<String, Object?>? member = result is Map
         ? _member(result, auth?.id())
         : null;
-    return <String, String>{'auth': authToken(socketId, channel, member)};
+    return <String, String>{
+      'auth': authToken(socketId as String, channel as String, member),
+    };
   }
 
   /// The socket id the client sent in the `X-Socket-ID` header, for
@@ -323,23 +368,49 @@ class Broadcast {
       event.ack(_error('channel is missing'));
       return;
     }
+    if (channel.length > maxChannelLength) {
+      event.ack(_error('channel name is too long'));
+      return;
+    }
     Socket socket = event.socket;
-    String room = roomOf(channel);
-    if (socket.rooms.contains(room)) {
+    if (socket.rooms.contains(roomOf(channel))) {
       event.ack(_ok);
       return;
     }
-    Object? grant = await _grant(socket, channel, body['auth']);
-    if (grant == null || !socket.connected) {
-      event.ack(_error('Forbidden'));
+    Set<String> pending = _pending[socket] ??= <String>{};
+    if (pending.contains(channel)) {
+      event.ack(_error('already subscribing'));
       return;
     }
-    socket.join(room);
-    if (grant is Map<String, Object?>) {
-      await _presenceJoin(socket, channel, grant);
+    int count = socket.rooms.where(_isChannelRoom).length + pending.length;
+    if (count >= maxChannelsPerSocket) {
+      event.ack(_error('too many channels'));
+      return;
     }
-    event.ack(_ok);
+    pending.add(channel);
+    try {
+      event.ack(await _subscribe(socket, channel, body['auth']));
+    } finally {
+      pending.remove(channel);
+    }
   }
+
+  static Future<Map<String, Object>> _subscribe(
+    Socket socket,
+    String channel,
+    Object? token,
+  ) async {
+    Object? grant = await _grant(socket, channel, token);
+    if (grant == null || !socket.connected) return _error('Forbidden');
+    if (grant is Map<String, Object?>) {
+      bool joined = await _presenceJoin(socket, channel, grant);
+      return joined ? _ok : _error('presence is not available');
+    }
+    socket.join(roomOf(channel));
+    return _ok;
+  }
+
+  static bool _isChannelRoom(String room) => room.startsWith('broadcast:');
 
   /// True or a presence member when [socket] may subscribe to
   /// [channel]: with its logged-in user and the rule, or with a token.
@@ -394,42 +465,86 @@ class Broadcast {
     return created;
   }
 
-  static Future<void> _presenceJoin(
+  /// Joins the room and tells the members. False when the members can
+  /// not be read (a server did not answer): then the socket is not in.
+  static Future<bool> _presenceJoin(
     Socket socket,
     String channel,
     Map<String, Object?> member,
   ) async {
-    _presence(socket)[channel] = member;
-    List<Map<dynamic, dynamic>> members = await _members(socket, channel);
-    Object? userId = member['user_id'];
-    // the first socket of this user: tell the others
-    if (members.where(_sameUser(userId)).length == 1) {
-      await socket.nsp.to(roomOf(channel)).except(socket.id).emitArgs(
-        'presence:joining',
-        <Object?>[channel, member],
-      );
+    Completer<void> lock = await _lock(channel);
+    try {
+      if (!socket.connected) return false;
+      socket.join(roomOf(channel));
+      _presence(socket)[channel] = member;
+      List<Map<dynamic, dynamic>> members;
+      try {
+        members = await _members(socket, channel);
+      } catch (error) {
+        stderr.writeln('dox_socketio: presence members of $channel: $error');
+        socket.leave(roomOf(channel));
+        _presence(socket).remove(channel);
+        return false;
+      }
+      Object? userId = member['user_id'];
+      // the first socket of this user: tell the others
+      if (members.where(_sameUser(userId)).length == 1) {
+        await socket.nsp.to(roomOf(channel)).except(socket.id).emitArgs(
+          'presence:joining',
+          <Object?>[channel, member],
+        );
+      }
+      Map<Object?, Map<dynamic, dynamic>> unique =
+          <Object?, Map<dynamic, dynamic>>{
+            for (Map<dynamic, dynamic> one in members) one['user_id']: one,
+          };
+      socket.emitArgs('presence:subscribed', <Object?>[
+        channel,
+        unique.values.toList(),
+      ]);
+      return true;
+    } finally {
+      _unlock(channel, lock);
     }
-    Map<Object?, Map<dynamic, dynamic>> unique =
-        <Object?, Map<dynamic, dynamic>>{
-          for (Map<dynamic, dynamic> one in members) one['user_id']: one,
-        };
-    socket.emitArgs('presence:subscribed', <Object?>[
-      channel,
-      unique.values.toList(),
-    ]);
   }
 
   static Future<void> _presenceLeave(Socket socket, String channel) async {
-    Object? member = _presence(socket).remove(channel);
-    if (member is! Map) return;
-    List<Map<dynamic, dynamic>> members = await _members(socket, channel);
-    // the last socket of this user left: tell the others
-    if (!members.any(_sameUser(member['user_id']))) {
-      await socket.nsp.to(roomOf(channel)).emitArgs(
-        'presence:leaving',
-        <Object?>[channel, member],
-      );
+    Completer<void> lock = await _lock(channel);
+    try {
+      Object? member = _presence(socket).remove(channel);
+      if (member is! Map) return;
+      bool last = true;
+      try {
+        List<Map<dynamic, dynamic>> members = await _members(socket, channel);
+        last = !members.any(_sameUser(member['user_id']));
+      } catch (error) {
+        // best effort: the others still learn that this socket left
+        stderr.writeln('dox_socketio: presence members of $channel: $error');
+      }
+      // the last socket of this user left: tell the others
+      if (last) {
+        await socket.nsp.to(roomOf(channel)).emitArgs(
+          'presence:leaving',
+          <Object?>[channel, member],
+        );
+      }
+    } finally {
+      _unlock(channel, lock);
     }
+  }
+
+  /// Waits for the presence work before it on [channel] in this isolate.
+  static Future<Completer<void>> _lock(String channel) async {
+    Future<void>? before = _locks[channel];
+    Completer<void> mine = Completer<void>();
+    _locks[channel] = mine.future;
+    if (before != null) await before;
+    return mine;
+  }
+
+  static void _unlock(String channel, Completer<void> mine) {
+    mine.complete();
+    if (identical(_locks[channel], mine.future)) _locks.remove(channel);
   }
 
   /// One member per socket in [channel], on all servers.
