@@ -207,10 +207,13 @@ socket.on('connect', async () => {
 socket.on('OrderShipped', (channel, payload) => console.log(channel, payload));
 ```
 
+Turn broadcasting on for one namespace only. With `listen` on two namespaces, both accept `subscribe`, but `Broadcast.event` sends only through the last one.
+
 Limits:
 
 - `Broadcast.maxChannelLength` (default 200) and `Broadcast.maxChannelsPerSocket` (default 100). Over a limit, the ack is `{ok: false, error: 'channel name is too long'}` or `'too many channels'`.
 - The member list uses `fetchSockets`, so it covers all isolates and servers of the adapter. When a server does not answer in time, a presence `subscribe` is refused (`'presence is not available'`), and a leave still sends `presence:leaving`.
+- During an outage (a dead Redis node or isolate), each presence join or leave of a channel waits up to `Broadcast.presenceTimeout` (default 2 seconds), one after another.
 - Presence joins and leaves of one channel run one after another in each isolate, so one isolate is exact. When two sockets of one user subscribe or leave at the same moment on two isolates or servers, `presence:joining` or `presence:leaving` can be missed or sent twice.
 
 ## Many servers

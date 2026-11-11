@@ -89,6 +89,11 @@ class OrderShipped with ShouldBroadcast {
   Map<String, Object?> broadcastWith() => <String, Object?>{'id': id};
 }
 
+class Slow with ShouldBroadcast {
+  @override
+  List<Channel> broadcastOn() => <Channel>[PrivateChannel('slow.1')];
+}
+
 class News with ShouldBroadcast {
   @override
   List<Channel> broadcastOn() => <Channel>[Channel('news')];
@@ -114,6 +119,11 @@ bool teamUser(Object? user, String team, String member) {
 }
 
 bool throwingRule(Object? user) => throw StateError('db is down');
+
+Future<bool> slowRule(Object? user, String id) async {
+  await Future<void>.delayed(Duration(milliseconds: 200));
+  return true;
+}
 
 String get baseUrl => 'http://127.0.0.1:${Dox().server.httpServer.port}';
 
@@ -161,6 +171,7 @@ void main() {
     Broadcast.channel('chat.{room}', chatMember);
     Broadcast.channel('teams.{team}.users.{user}', teamUser);
     Broadcast.channel('broken', throwingRule);
+    Broadcast.channel('slow.{id}', slowRule);
     // the provider listened already: this only sets the send target again
     Broadcast.listen(SocketIoProvider.server!.sockets);
   });
@@ -193,6 +204,7 @@ void main() {
     Broadcast.tokenLifetime = const Duration(minutes: 1);
     Broadcast.maxChannelLength = 200;
     Broadcast.maxChannelsPerSocket = 100;
+    Broadcast.presenceTimeout = const Duration(seconds: 2);
     Broadcast.reset();
   });
 
@@ -320,6 +332,18 @@ void main() {
       expect(await subscribe(guest, 'c'), _err('too many channels'));
       expect(await unsubscribe(guest, 'b'), ok);
       expect(await subscribe(guest, 'c'), ok);
+    });
+
+    test('unsubscribe cancels a subscribe that still runs', () async {
+      sio.Socket alice = await client('alice');
+      Future<Object?> subscribed = subscribe(alice, 'private-slow.1');
+      expect(await unsubscribe(alice, 'private-slow.1'), ok);
+      expect(await subscribed, _err('unsubscribed'));
+      List<Object?> got = collect(alice, 'Slow');
+      await Broadcast.event(Slow());
+      await settle();
+      expect(got, isEmpty);
+      expect(await subscribe(alice, 'private-slow.1'), ok);
     });
 
     test('a channel that is not a string gets an error', () async {

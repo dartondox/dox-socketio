@@ -103,6 +103,11 @@ class Broadcast {
   /// The most channels one socket may be subscribed to.
   static int maxChannelsPerSocket = 100;
 
+  /// How long a presence join or leave waits for the member list of the
+  /// other servers. Joins and leaves of one channel wait in line, so keep
+  /// it short.
+  static Duration presenceTimeout = const Duration(seconds: 2);
+
   /// The key of the presence members in `socket.data`.
   static const String presenceKey = 'broadcast_presence';
 
@@ -117,7 +122,9 @@ class Broadcast {
   static final Expando<bool> _listening = Expando<bool>();
 
   /// Channels each socket is subscribing to now (the rule still runs).
-  static final Expando<Set<String>> _pending = Expando<Set<String>>();
+  /// True when an `unsubscribe` came in the meantime.
+  static final Expando<Map<String, bool>> _pending =
+      Expando<Map<String, bool>>();
 
   /// The last presence join or leave of each channel. They run one after
   /// another in this isolate, so "first socket of this user" is right.
@@ -377,8 +384,8 @@ class Broadcast {
       event.ack(_ok);
       return;
     }
-    Set<String> pending = _pending[socket] ??= <String>{};
-    if (pending.contains(channel)) {
+    Map<String, bool> pending = _pending[socket] ??= <String, bool>{};
+    if (pending.containsKey(channel)) {
       event.ack(_error('already subscribing'));
       return;
     }
@@ -387,7 +394,7 @@ class Broadcast {
       event.ack(_error('too many channels'));
       return;
     }
-    pending.add(channel);
+    pending[channel] = false;
     try {
       event.ack(await _subscribe(socket, channel, body['auth']));
     } finally {
@@ -402,13 +409,18 @@ class Broadcast {
   ) async {
     Object? grant = await _grant(socket, channel, token);
     if (grant == null || !socket.connected) return _error('Forbidden');
+    if (_cancelled(socket, channel)) return _error('unsubscribed');
     if (grant is Map<String, Object?>) {
-      bool joined = await _presenceJoin(socket, channel, grant);
-      return joined ? _ok : _error('presence is not available');
+      String? error = await _presenceJoin(socket, channel, grant);
+      return error == null ? _ok : _error(error);
     }
     socket.join(roomOf(channel));
     return _ok;
   }
+
+  /// True when an `unsubscribe` of [channel] came while it subscribes.
+  static bool _cancelled(Socket socket, String channel) =>
+      _pending[socket]?[channel] == true;
 
   static bool _isChannelRoom(String room) => room.startsWith('broadcast:');
 
@@ -442,6 +454,10 @@ class Broadcast {
       event.ack(_error('channel is missing'));
       return;
     }
+    Map<String, bool>? pending = _pending[event.socket];
+    if (pending != null && pending.containsKey(channel)) {
+      pending[channel] = true;
+    }
     event.socket.leave(roomOf(channel));
     await _presenceLeave(event.socket, channel);
     event.ack(_ok);
@@ -465,34 +481,35 @@ class Broadcast {
     return created;
   }
 
-  /// Joins the room and tells the members. False when the members can
-  /// not be read (a server did not answer): then the socket is not in.
-  static Future<bool> _presenceJoin(
+  /// Joins the room and tells the members. Gives an error text when the
+  /// socket did not join: an `unsubscribe` came, or the members could
+  /// not be read or told (a server did not answer, Redis is down).
+  static Future<String?> _presenceJoin(
     Socket socket,
     String channel,
     Map<String, Object?> member,
   ) async {
     Completer<void> lock = await _lock(channel);
     try {
-      if (!socket.connected) return false;
+      if (!socket.connected) return 'Forbidden';
+      if (_cancelled(socket, channel)) return 'unsubscribed';
       socket.join(roomOf(channel));
       _presence(socket)[channel] = member;
       List<Map<dynamic, dynamic>> members;
       try {
         members = await _members(socket, channel);
+        // the first socket of this user: tell the others
+        if (members.where(_sameUser(member['user_id'])).length == 1) {
+          await socket.nsp.to(roomOf(channel)).except(socket.id).emitArgs(
+            'presence:joining',
+            <Object?>[channel, member],
+          );
+        }
       } catch (error) {
-        stderr.writeln('dox_socketio: presence members of $channel: $error');
+        stderr.writeln('dox_socketio: presence join of $channel: $error');
         socket.leave(roomOf(channel));
         _presence(socket).remove(channel);
-        return false;
-      }
-      Object? userId = member['user_id'];
-      // the first socket of this user: tell the others
-      if (members.where(_sameUser(userId)).length == 1) {
-        await socket.nsp.to(roomOf(channel)).except(socket.id).emitArgs(
-          'presence:joining',
-          <Object?>[channel, member],
-        );
+        return 'presence is not available';
       }
       Map<Object?, Map<dynamic, dynamic>> unique =
           <Object?, Map<dynamic, dynamic>>{
@@ -502,7 +519,7 @@ class Broadcast {
         channel,
         unique.values.toList(),
       ]);
-      return true;
+      return null;
     } finally {
       _unlock(channel, lock);
     }
@@ -523,10 +540,14 @@ class Broadcast {
       }
       // the last socket of this user left: tell the others
       if (last) {
-        await socket.nsp.to(roomOf(channel)).emitArgs(
-          'presence:leaving',
-          <Object?>[channel, member],
-        );
+        try {
+          await socket.nsp.to(roomOf(channel)).emitArgs(
+            'presence:leaving',
+            <Object?>[channel, member],
+          );
+        } catch (error) {
+          stderr.writeln('dox_socketio: presence leave of $channel: $error');
+        }
       }
     } finally {
       _unlock(channel, lock);
@@ -554,7 +575,8 @@ class Broadcast {
   ) async {
     List<RemoteSocket> sockets = await socket.nsp
         .to(roomOf(channel))
-        .fetchSockets();
+        .fetchSockets()
+        .timeout(presenceTimeout);
     List<Map<dynamic, dynamic>> members = <Map<dynamic, dynamic>>[];
     for (RemoteSocket one in sockets) {
       Object? presence = one.data[presenceKey];

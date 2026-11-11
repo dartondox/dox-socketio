@@ -9,7 +9,7 @@
   - Presence channels send `presence:subscribed`, `presence:joining` and `presence:leaving`, like Laravel Echo. A user with many sockets is one member. It works across isolates and servers with the adapters. When a server does not answer, a presence `subscribe` is refused and a leave still sends `presence:leaving`.
   - `ShouldBroadcast` (`broadcastOn`, `broadcastAs`, `broadcastWith`), `Broadcast.event(event, toOthers:)` and `broadcast(event)` send events to the channels. `Broadcast.socketId(req)` reads `X-Socket-ID`. With no Socket.IO server (a queue worker), set `Broadcast.emitter` to a `SocketIoEmitter`.
   - `Broadcast.fake()` keeps the events for tests, with `assertBroadcasted`, `assertBroadcastedOn`, `assertBroadcastedTimes`, `assertNotBroadcasted` and `assertNothingBroadcasted`.
-  - Limits: `Broadcast.maxChannelLength` (200) and `Broadcast.maxChannelsPerSocket` (100). The auth endpoint answers 403 for a `socket_id` that is not a Socket.IO id.
+  - Limits: `Broadcast.maxChannelLength` (200), `Broadcast.maxChannelsPerSocket` (100) and `Broadcast.presenceTimeout` (2 seconds, how long a presence join or leave waits for the other servers). An `unsubscribe` cancels a `subscribe` of the same channel that still runs. The auth endpoint answers 403 for a `socket_id` that is not a Socket.IO id.
   - `Broadcast.reset()` forgets the rules, the send target and the emitter, for tests.
   - The event names follow Laravel Echo. The auth does not: the client sends the token from the auth endpoint in its own `subscribe`.
 - `crypto` is now a direct dependency (it was already used through dox_core).
