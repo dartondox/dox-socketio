@@ -181,5 +181,51 @@ void main() {
       expect(io!.engine.clientsCount, 0);
       expect((await handshake()).$1, 200);
     });
+
+    test('handshakes at the same time do not pass the limit', () async {
+      await start(
+        ServerOptions(
+          maxSessions: 1,
+          allowRequest: (EngineRequest r) async {
+            await Future<void>.delayed(Duration(milliseconds: 10));
+            return true;
+          },
+        ),
+      );
+      List<(int, String)> all = await Future.wait(
+        List<Future<(int, String)>>.generate(5, (int _) => handshake()),
+      );
+      List<int> codes = all.map(((int, String) r) => r.$1).toList()..sort();
+      expect(codes, <int>[200, 503, 503, 503, 503]);
+      expect(io!.engine.clientsCount, 1);
+    });
+
+    test('websockets at the same time do not pass the limit', () async {
+      await start(
+        ServerOptions(
+          maxSessions: 1,
+          allowRequest: (EngineRequest r) async {
+            await Future<void>.delayed(Duration(milliseconds: 10));
+            return true;
+          },
+        ),
+      );
+      Future<WebSocket?> connect() async {
+        try {
+          return await WebSocket.connect(wsUrl());
+        } on WebSocketException {
+          return null;
+        }
+      }
+
+      List<WebSocket?> all = await Future.wait(<Future<WebSocket?>>[
+        connect(),
+        connect(),
+      ]);
+      List<WebSocket> open = all.whereType<WebSocket>().toList();
+      expect(open.length, 1);
+      expect(io!.engine.clientsCount, 1);
+      await open.single.close();
+    });
   });
 }

@@ -120,6 +120,10 @@ class ServerOptions {
   ///
   /// Requests of an open session (polling) do not run it again.
   /// Null (the default) allows every request.
+  ///
+  /// Keep the hook fast. When the client leaves while the hook runs, the
+  /// session is still made, and it holds a [maxSessions] slot until the
+  /// ping timeout.
   final AllowRequest? allowRequest;
 
   /// Most open Engine.IO sessions on this server. Null (the default) means
