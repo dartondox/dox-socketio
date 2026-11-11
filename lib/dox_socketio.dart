@@ -8,6 +8,8 @@ export 'src/adapter/msgpack.dart';
 export 'src/adapter/pub_sub_adapter.dart';
 export 'src/adapter/redis_adapter.dart';
 export 'src/adapter/socket_io_emitter.dart';
+export 'src/broadcast/broadcast.dart';
+export 'src/broadcast/broadcast_fake.dart';
 export 'src/constants/engine_constants.dart'
     show CloseReason, EnginePacketType, EngineError;
 export 'src/constants/socket_constants.dart' show SocketPacketType;

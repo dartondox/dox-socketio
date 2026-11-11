@@ -106,6 +106,7 @@ static Future<User?> findUser(Handshake handshake) async {
 - The Redis adapter uses the message format of `@socket.io/redis-adapter`. Dox and Node.js servers can share one Redis.
 - `fetchSockets`, `socketsJoin`, `socketsLeave`, `disconnectSockets`, `serverSideEmit` and broadcast acks work across all servers.
 - `SocketIoEmitter` sends events from any Dart program, like `@socket.io/redis-emitter`.
+- Broadcasting with public, private and presence channels, like Laravel (opt-in).
 
 ## Origins
 
@@ -140,6 +141,80 @@ ServerOptions(
 - Keep the hook fast. A slow hook keeps a slot busy longer.
 
 Both are null by default: all requests are allowed and there is no limit.
+
+## Broadcasting
+
+Send server events to channels, like Laravel broadcasting. It is off by default. Turn it on in the config (or call `Broadcast.listen(io.sockets)` on a plain server):
+
+```dart
+SocketIoConfig(broadcasting: true, namespaces: <NamespaceHandler>[ChatNamespace()]);
+```
+
+Add rules for private and presence channels, and the auth route, in every isolate (for example in a router):
+
+```dart
+Broadcast.channel('orders.{id}', (Object? user, String id) => (user as User).id.toString() == id);
+Broadcast.channel('chat.{room}', (Object? user, String room) {
+  User u = user as User;
+  return <String, Object?>{'id': u.id, 'name': u.name}; // presence member
+});
+Broadcast.routes(middleware: <dynamic>[AuthMiddleware()]); // POST /broadcasting/auth
+```
+
+A rule has no prefix, so `orders.{id}` checks both `private-orders.1` and `presence-orders.1`. When many patterns match, the first one added wins.
+
+Send an event:
+
+```dart
+class OrderShipped with ShouldBroadcast {
+  OrderShipped(this.order);
+  final Order order;
+
+  @override
+  List<Channel> broadcastOn() => <Channel>[PrivateChannel('orders.${order.id}')];
+
+  @override
+  Map<String, Object?> broadcastWith() => <String, Object?>{'id': order.id};
+}
+
+await broadcast(OrderShipped(order));
+await Broadcast.event(OrderShipped(order), toOthers: Broadcast.socketId(req));
+```
+
+The client:
+
+- `socket.emit('subscribe', {channel: 'private-orders.5', auth?}, ack)`. The ack is `{ok: true}` or `{ok: false, error}`.
+- A socket logged in with `SocketAuth` needs no `auth`. Else get a token first: `POST /broadcasting/auth` with `socket_id` and `channel_name` gives `{auth: token}`.
+- Events come as `socket.on('OrderShipped', (channel, payload) => ...)`.
+- Presence channels also send `presence:subscribed` (channel, members), `presence:joining` and `presence:leaving` (channel, member). A member is `{user_id, user_info}`.
+- `socket.emit('unsubscribe', {channel})` leaves.
+
+In a process with no Socket.IO server, like a queue worker, set `Broadcast.emitter = SocketIoEmitter(redis)`. The servers must use the Redis adapter. In tests, `Broadcast.fake()` keeps the events and sends nothing.
+
+The event names and the presence names follow Laravel Echo's Socket.IO connector. The auth does not: Echo sends `auth` as an object with headers, and this server wants a token string. So get the token yourself and send a small `subscribe`, for example with `socket.io-client`:
+
+```js
+const socket = io('https://app.example.com', { transports: ['websocket'] });
+socket.on('connect', async () => {
+  const res = await fetch('/broadcasting/auth', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiToken}` },
+    body: JSON.stringify({ socket_id: socket.id, channel_name: 'private-orders.5' }),
+  });
+  const { auth } = await res.json();
+  socket.emit('subscribe', { channel: 'private-orders.5', auth }, (ack) => console.log(ack));
+});
+socket.on('OrderShipped', (channel, payload) => console.log(channel, payload));
+```
+
+Turn broadcasting on for one namespace only. With `listen` on two namespaces, both accept `subscribe`, but `Broadcast.event` sends only through the last one.
+
+Limits:
+
+- `Broadcast.maxChannelLength` (default 200) and `Broadcast.maxChannelsPerSocket` (default 100). Over a limit, the ack is `{ok: false, error: 'channel name is too long'}` or `'too many channels'`.
+- The member list uses `fetchSockets`, so it covers all isolates and servers of the adapter. When a server does not answer in time, a presence `subscribe` is refused (`'presence is not available'`), and a leave still sends `presence:leaving`.
+- During an outage (a dead Redis node or isolate), each presence join or leave of a channel waits up to `Broadcast.presenceTimeout` (default 2 seconds), one after another.
+- Presence joins and leaves of one channel run one after another in each isolate, so one isolate is exact. When two sockets of one user subscribe or leave at the same moment on two isolates or servers, `presence:joining` or `presence:leaving` can be missed or sent twice.
 
 ## Many servers
 

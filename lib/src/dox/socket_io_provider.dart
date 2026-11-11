@@ -1,6 +1,7 @@
 import 'package:dox_core/dox_core.dart';
 
 import '../adapter/isolate_adapter.dart';
+import '../broadcast/broadcast.dart';
 import '../engine/origin_check.dart';
 import '../server/namespace.dart';
 import '../server/socket_io_server.dart';
@@ -45,6 +46,7 @@ class SocketIoProvider extends DoxProvider {
     for (NamespaceHandler handler in config.namespaces) {
       io.register(handler);
     }
+    if (config.broadcasting) Broadcast.listen(io.sockets);
     server = io;
     Route.mount(config.options.path, io.handle);
     if (Dox().isolateId == 1 &&
