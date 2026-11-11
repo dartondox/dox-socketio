@@ -123,6 +123,24 @@ ServerOptions(allowedOrigins: <String>['https://app.example.com'])
 
 Then a websocket or polling request from another origin gets `403`. A client with no `Origin` header (not a browser) is always allowed. Case and a trailing `/` do not matter. `cors` still sets the CORS headers for polling.
 
+## Allow requests and limit sessions
+
+`allowRequest` runs for every handshake and every websocket upgrade. It gets the `EngineRequest` (headers, query, address) and gives `true` or `false`, sync or async. `maxSessions` is the most open sessions.
+
+```dart
+ServerOptions(
+  allowRequest: (EngineRequest req) => req.query['key'] == 'secret',
+  maxSessions: 10000,
+)
+```
+
+- The hook says `false` or throws: the client gets `403` with `{"code":4,"message":"Forbidden"}`.
+- At the limit, a new handshake gets `503` with `{"code":3,"message":"Too many sessions"}`. Open sessions keep working.
+- The count is per isolate. With 4 isolates, the app allows 4 times `maxSessions`.
+- Keep the hook fast. A slow hook keeps a slot busy longer.
+
+Both are null by default: all requests are allowed and there is no limit.
+
 ## Many servers
 
 Use the Redis adapter on each server:
