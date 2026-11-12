@@ -46,7 +46,10 @@ class SocketIoProvider extends DoxProvider {
     for (NamespaceHandler handler in config.namespaces) {
       io.register(handler);
     }
-    if (config.broadcasting) Broadcast.listen(io.sockets);
+    if (config.broadcasting) {
+      Broadcast.listen(io.sockets);
+      if (config.whisper) Broadcast.whisper = true;
+    }
     server = io;
     Route.mount(config.options.path, io.handle);
     if (Dox().isolateId == 1 &&

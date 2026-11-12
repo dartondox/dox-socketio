@@ -37,12 +37,18 @@ class SocketIoConfig {
   /// to channels, and `Broadcast.event` sends to them. Off by default.
   final bool broadcasting;
 
+  /// Lets clients send `client-` events to the other members of a private
+  /// or presence channel. Needs [broadcasting]. Off by default. See
+  /// `Broadcast.whisper`.
+  final bool whisper;
+
   const SocketIoConfig({
     this.enabled = true,
     this.options = const ServerOptions(),
     this.namespaces = const <NamespaceHandler>[],
     this.adapter,
     this.broadcasting = false,
+    this.whisper = false,
   });
 }
 

@@ -14,6 +14,10 @@
   - Limits: `Broadcast.maxChannelLength` (200), `Broadcast.maxChannelsPerSocket` (100) and `Broadcast.presenceTimeout` (2 seconds, how long a presence join or leave waits for the other servers). An `unsubscribe` cancels a `subscribe` of the same channel that still runs. The auth endpoint answers 403 for a `socket_id` that is not a Socket.IO id.
   - `Broadcast.reset()` forgets the rules, the send target and the emitter, for tests.
   - The event names follow Laravel Echo. The auth does not: the client sends the token from the auth endpoint in its own `subscribe`.
+- New: whisper, client-to-client events on private and presence channels. It is off by default. Turn it on with `SocketIoConfig(broadcasting: true, whisper: true)` (or `Broadcast.whisper = true` on a plain server).
+  - A client emits `client event` with `{channel, event, data}`. The event name must start with `client-`. The other sockets in the channel get `<event>` with `(channel, data)`, on all servers. The sender does not get it.
+  - Only a socket that subscribed to the channel can whisper. Public channels are refused. Data bigger than `Broadcast.maxWhisperSize` (10 KB of JSON) is dropped. An ack, when the client asks for one, is `{ok: true}` or `{ok: false, error}`.
+  - With whisper off, a `client event` is ignored, like before.
 - `crypto` is now a direct dependency (it was already used through dox_core).
 - New: `ServerOptions(allowRequest:)`, a hook like `allowRequest` of the Node `engine.io` server. It runs for every handshake and websocket upgrade and gives true or false (sync or async). With false, the client gets 403 with the Engine.IO error code 4 (`Forbidden`). A hook that throws refuses the request too. Null (the default) allows all, like before.
 - New: `ServerOptions(maxSessions:)`, the most open Engine.IO sessions per isolate. At the limit, a new handshake gets 503 (`Too many sessions`). Open sessions keep working. Null (the default) means no limit, like before.

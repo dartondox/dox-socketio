@@ -81,6 +81,9 @@ Future<void> broadcast(ShouldBroadcast event, {String? toOthers}) =>
 ///   socket, `presence:joining` and `presence:leaving` with
 ///   `(channel, member)` to the others. A member is
 ///   `{user_id, user_info}`.
+/// - whisper (only with [whisper] on): client -> server `client event`
+///   with `{channel, event, data}`, then server -> the other members
+///   `<event>` with `(channel, data)`. See [whisper].
 class Broadcast {
   Broadcast._();
 
@@ -105,6 +108,29 @@ class Broadcast {
   /// other servers. Joins and leaves of one channel wait in line, so keep
   /// it short.
   static Duration presenceTimeout = const Duration(seconds: 2);
+
+  /// Lets a client send an event to the other members of a private or
+  /// presence channel it joined (a "whisper", for example "is typing").
+  /// Off by default, because it lets clients message each other.
+  /// `SocketIoConfig(broadcasting: true, whisper: true)` turns it on.
+  ///
+  /// The client sends `client event` with `{channel, event, data}`. The
+  /// `event` must start with `client-`, so it can not look like a
+  /// server event. The server sends `<event>` with `(channel, data)` to
+  /// the other sockets in the channel, on all servers, never back to the
+  /// sender. It drops (and answers an ack with `{ok: false, error}`) a
+  /// whisper on a public channel, from a socket that did not subscribe,
+  /// or with data bigger than [maxWhisperSize].
+  /// ```js
+  /// socket.emit('client event', {
+  ///   channel: 'private-chat.1', event: 'client-typing', data: { name: 'Alice' },
+  /// });
+  /// socket.on('client-typing', (channel, data) => {});
+  /// ```
+  static bool whisper = false;
+
+  /// The biggest whisper `data`, in bytes of JSON. Default: 10 KB.
+  static int maxWhisperSize = 10 * 1024;
 
   /// The key of the presence members in `socket.data`.
   static const String presenceKey = 'broadcast_presence';
@@ -169,13 +195,14 @@ class Broadcast {
   }
 
   /// For tests: forgets the rules, the send target of [listen], the
-  /// [emitter] and the fake. Sockets of a namespace that [listen] got can
+  /// [emitter], the fake and turns [whisper] off. Sockets of a namespace that [listen] got can
   /// still subscribe.
   static void reset() {
     _rules.clear();
     _nsp = null;
     emitter = null;
     _fake = null;
+    whisper = false;
   }
 
   /// Registers `POST [path]`, the HTTP auth endpoint (see
@@ -362,6 +389,7 @@ class Broadcast {
   static void _onConnection(Socket socket) {
     socket.on('subscribe', _onSubscribe);
     socket.on('unsubscribe', _onUnsubscribe);
+    socket.on('client event', _onWhisper);
     socket.on('disconnect', _onDisconnect);
   }
 
@@ -459,6 +487,51 @@ class Broadcast {
     event.socket.leave(roomOf(channel));
     await _presenceLeave(event.socket, channel);
     event.ack(_ok);
+  }
+
+  /// Sends a `client-` event to the other members of the channel. Off
+  /// unless [whisper] is on: then the event is ignored, as before.
+  static Future<void> _onWhisper(SocketEvent event) async {
+    if (!whisper) return;
+    Object? data = event.data;
+    Map<dynamic, dynamic> body = data is Map ? data : const <String, Object>{};
+    Object? channel = body['channel'];
+    Object? name = body['event'];
+    Socket socket = event.socket;
+    String? error;
+    if (channel is! String || name is! String) {
+      error = 'channel or event is missing';
+    } else if (!name.startsWith('client-')) {
+      error = 'event must start with client-';
+    } else if (name.length > maxChannelLength) {
+      error = 'event name is too long';
+    } else if (!channel.startsWith('private-') &&
+        !channel.startsWith('presence-')) {
+      error = 'whisper needs a private or presence channel';
+    } else if (!socket.rooms.contains(roomOf(channel))) {
+      error = 'not subscribed';
+    } else if (_size(body['data']) > maxWhisperSize) {
+      error = 'data is too big';
+    }
+    if (error != null) {
+      event.ack(_error(error));
+      return;
+    }
+    await socket.nsp.to(roomOf(channel as String)).except(socket.id).emitArgs(
+      name as String,
+      <Object?>[channel, body['data']],
+    );
+    event.ack(_ok);
+  }
+
+  /// The JSON size of [data] in bytes. Data that is not JSON counts as
+  /// too big.
+  static int _size(Object? data) {
+    try {
+      return utf8.encode(jsonEncode(data)).length;
+    } on JsonUnsupportedObjectError {
+      return maxWhisperSize + 1;
+    }
   }
 
   static Future<void> _onDisconnect(SocketEvent event) async {

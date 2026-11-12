@@ -25,7 +25,7 @@ SocketIoConfig socketIoConfig = SocketIoConfig(
 );
 ```
 
-`SocketIoConfig` options: `enabled` (default `true`), `options` (`ServerOptions()`), `namespaces` (`[]`), `adapter` (null), `broadcasting` (default `false`).
+`SocketIoConfig` options: `enabled` (default `true`), `options` (`ServerOptions()`), `namespaces` (`[]`), `adapter` (null), `broadcasting` (default `false`), `whisper` (default `false`, needs `broadcasting`).
 
 3. Create the provider in `lib/providers/socketio_provider.dart`. The generated container finds it, so run `dart run build_runner build` after you add it.
 
@@ -241,6 +241,8 @@ Client: on a socket of the `/` namespace (`const socket = io(url)`, not `io(url 
 
 In a process with no Socket.IO server, set `Broadcast.emitter = SocketIoEmitter(redis)`.
 
+Whisper (client to client, for example "is typing"): turn it on with `SocketIoConfig(broadcasting: true, whisper: true)`. A socket that subscribed to a private or presence channel sends `socket.emit('client event', {channel: 'presence-chat.lobby', event: 'client-typing', data: {name: 'Alice'}})`. The other sockets in the channel (not the sender) get `socket.on('client-typing', (channel, data) => ...)`, on all servers. The event name must start with `client-`. Public channels, sockets that did not subscribe and data over `Broadcast.maxWhisperSize` (10 KB of JSON) are dropped.
+
 ### 9. Test broadcasting
 
 ```dart
@@ -262,5 +264,6 @@ Broadcast.restore();
 - A namespace added with `io.of('/x')` in only one isolate makes `fetchSockets` wait and throw. Put namespaces in the config so every isolate adds them.
 - `maxSessions` counts per isolate. With 4 isolates the app allows 4 times the value.
 - Broadcasting runs on one namespace only: `/` with `SocketIoConfig(broadcasting: true)`. `Broadcast.listen(nsp)` on a plain server picks another one, and `Broadcast.event` sends through the last one listened. A `subscribe` on a namespace that is not listened gets no answer.
+- Whisper is off by default. With it off, a `client event` gets no answer. Do not name a server event `client-...`.
 - Broadcast limits: `Broadcast.maxChannelLength` (200), `Broadcast.maxChannelsPerSocket` (100), `Broadcast.presenceTimeout` (2 seconds).
 - Standalone, without Dox: `SocketIoServer io = SocketIoServer(); io.register(ChatNamespace()); await io.listen(3001);`.

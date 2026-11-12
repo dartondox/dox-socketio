@@ -216,6 +216,33 @@ Limits:
 - During an outage (a dead Redis node or isolate), each presence join or leave of a channel waits up to `Broadcast.presenceTimeout` (default 2 seconds), one after another.
 - Presence joins and leaves of one channel run one after another in each isolate, so one isolate is exact. When two sockets of one user subscribe or leave at the same moment on two isolates or servers, `presence:joining` or `presence:leaving` can be missed or sent twice.
 
+### Whisper (client to client)
+
+A whisper lets a client send an event to the other members of a private or presence channel, for example "is typing". The server only passes it on. It is off by default, because it lets clients message each other:
+
+```dart
+SocketIoConfig(broadcasting: true, whisper: true);
+```
+
+The client sends `client event` with `{channel, event, data}`. The event name must start with `client-`. The other sockets in the channel get `<event>` with `(channel, data)`:
+
+```js
+socket.emit('client event', {
+  channel: 'presence-chat.lobby',
+  event: 'client-typing',
+  data: { name: 'Alice' },
+}, (ack) => console.log(ack)); // the ack is optional
+socket.on('client-typing', (channel, data) => console.log(channel, data));
+```
+
+- Only a socket that subscribed to the channel can whisper, and only on a private or presence channel.
+- The sender does not get its own whisper. Its other sockets do.
+- It works across isolates and servers with the adapters.
+- A whisper is dropped when the data is bigger than `Broadcast.maxWhisperSize` (default 10 KB of JSON). The ack is `{ok: false, error}` (`'not subscribed'`, `'data is too big'`, ...).
+- The `client-` prefix keeps a whisper apart from server events. Do not give a server event (`broadcastAs`) a name that starts with `client-`.
+- The wire format is the same as the Laravel Echo Socket.IO connector, so `channel.whisper('typing', data)` and `listenForWhisper('typing', ...)` of Echo work.
+- With whisper off, a `client event` is ignored, with no ack.
+
 ## Many servers
 
 Use the Redis adapter on each server:

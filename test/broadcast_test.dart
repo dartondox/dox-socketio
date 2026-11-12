@@ -160,6 +160,22 @@ Future<Object?> unsubscribe(sio.Socket socket, String channel) {
   return done.future.timeout(Duration(seconds: 5));
 }
 
+/// Sends a whisper and gives the ack.
+Future<Object?> whisperTo(
+  sio.Socket socket,
+  String channel,
+  Object? data, [
+  String event = 'client-typing',
+]) {
+  Completer<Object?> done = Completer<Object?>();
+  socket.emitWithAck('client event', <String, Object?>{
+    'channel': channel,
+    'event': event,
+    'data': data,
+  }, ack: done.complete);
+  return done.future.timeout(Duration(seconds: 5));
+}
+
 const Map<String, Object> ok = <String, Object>{'ok': true};
 const Map<String, Object> refused = <String, Object>{
   'ok': false,
@@ -215,6 +231,7 @@ void main() {
     Broadcast.maxChannelLength = 200;
     Broadcast.maxChannelsPerSocket = 100;
     Broadcast.presenceTimeout = const Duration(seconds: 2);
+    Broadcast.maxWhisperSize = 10 * 1024;
     Broadcast.reset();
     if (!gate.isCompleted) gate.complete();
   });
@@ -563,6 +580,119 @@ void main() {
     });
   });
 
+  group('whisper', () {
+    setUp(() => Broadcast.whisper = true);
+
+    test('goes to the other members, not the sender', () async {
+      sio.Socket alice = await client('alice');
+      sio.Socket alice2 = await client('alice');
+      sio.Socket outside = await client('alice');
+      await subscribe(alice, 'private-orders.1');
+      await subscribe(alice2, 'private-orders.1');
+      List<Object?> self = collect(alice, 'client-typing');
+      List<Object?> got = collect(alice2, 'client-typing');
+      List<Object?> notGot = collect(outside, 'client-typing');
+      expect(
+        await whisperTo(alice, 'private-orders.1', <String, Object?>{'a': 1}),
+        ok,
+      );
+      await waitFor(got, 1, 'client-typing');
+      await settle(); // nothing on the sender or the socket outside
+      expect(got.single, <Object?>[
+        'private-orders.1',
+        <String, Object?>{'a': 1},
+      ]);
+      expect(self, isEmpty);
+      expect(notGot, isEmpty);
+    });
+
+    test('works on a presence channel', () async {
+      sio.Socket alice = await client('alice');
+      sio.Socket bob = await client('bob');
+      await subscribe(alice, 'presence-chat.w');
+      await subscribe(bob, 'presence-chat.w');
+      Future<Object?> got = next(bob, 'client-typing');
+      expect(await whisperTo(alice, 'presence-chat.w', 'hi'), ok);
+      expect(await got, <Object?>['presence-chat.w', 'hi']);
+    });
+
+    test('a socket that did not subscribe is blocked', () async {
+      sio.Socket alice = await client('alice');
+      sio.Socket member = await client('alice');
+      await subscribe(member, 'private-orders.1');
+      List<Object?> got = collect(member, 'client-typing');
+      expect(
+        await whisperTo(alice, 'private-orders.1', 1),
+        _err('not subscribed'),
+      );
+      await settle();
+      expect(got, isEmpty);
+    });
+
+    test('a public channel is blocked', () async {
+      sio.Socket a = await client();
+      sio.Socket b = await client();
+      await subscribe(a, 'news');
+      await subscribe(b, 'news');
+      List<Object?> got = collect(b, 'client-typing');
+      expect(
+        await whisperTo(a, 'news', 1),
+        _err('whisper needs a private or presence channel'),
+      );
+      await settle();
+      expect(got, isEmpty);
+    });
+
+    test('an event with no client- prefix is blocked', () async {
+      sio.Socket alice = await client('alice');
+      sio.Socket alice2 = await client('alice');
+      await subscribe(alice, 'private-orders.1');
+      await subscribe(alice2, 'private-orders.1');
+      List<Object?> got = collect(alice2, 'OrderShipped');
+      expect(
+        await whisperTo(alice, 'private-orders.1', 1, 'OrderShipped'),
+        _err('event must start with client-'),
+      );
+      await settle();
+      expect(got, isEmpty);
+    });
+
+    test('too big data is dropped', () async {
+      Broadcast.maxWhisperSize = 10;
+      sio.Socket alice = await client('alice');
+      sio.Socket alice2 = await client('alice');
+      await subscribe(alice, 'private-orders.1');
+      await subscribe(alice2, 'private-orders.1');
+      List<Object?> got = collect(alice2, 'client-typing');
+      expect(
+        await whisperTo(alice, 'private-orders.1', 'x' * 20),
+        _err('data is too big'),
+      );
+      expect(await whisperTo(alice, 'private-orders.1', 'small'), ok);
+      await waitFor(got, 1, 'client-typing');
+      await settle();
+      expect(got, hasLength(1));
+    });
+
+    test('off: the event is ignored, with no ack', () async {
+      Broadcast.whisper = false;
+      sio.Socket alice = await client('alice');
+      sio.Socket alice2 = await client('alice');
+      await subscribe(alice, 'private-orders.1');
+      await subscribe(alice2, 'private-orders.1');
+      List<Object?> got = collect(alice2, 'client-typing');
+      await expectLater(
+        whisperTo(
+          alice,
+          'private-orders.1',
+          1,
+        ).timeout(const Duration(milliseconds: 500)),
+        throwsA(isA<TimeoutException>()),
+      );
+      expect(got, isEmpty);
+    });
+  });
+
   group('http auth', () {
     Future<http.Response> auth(String? user, String socketId, String channel) {
       return http.post(
@@ -691,6 +821,46 @@ void main() {
         Future<Object?> leaving = next(bob, 'presence:leaving');
         alice.dispose();
         expect(((await leaving)! as List<Object?>).first, 'presence-chat.r');
+      } finally {
+        await a.close();
+        await b.close();
+      }
+    });
+
+    test('a whisper reaches a member on the other server', () async {
+      SocketIoServer a = SocketIoServer(
+        adapter: newAdapter(RedisFormat.msgpack, 'broadcast-whisper'),
+      );
+      SocketIoServer b = SocketIoServer(
+        adapter: newAdapter(RedisFormat.msgpack, 'broadcast-whisper'),
+      );
+      for (SocketIoServer io in <SocketIoServer>[a, b]) {
+        io.use(MainNamespace().login);
+        Broadcast.listen(io.sockets);
+      }
+      Broadcast.whisper = true;
+      String urlA = 'http://127.0.0.1:${(await a.listen(0)).port}';
+      String urlB = 'http://127.0.0.1:${(await b.listen(0)).port}';
+      try {
+        sio.Socket alice = await connectClient(
+          urlA,
+          '',
+          auth: <String, String>{'token': 'alice'},
+        );
+        sio.Socket bob = await connectClient(
+          urlB,
+          '',
+          auth: <String, String>{'token': 'bob'},
+        );
+        clients.addAll(<sio.Socket>[alice, bob]);
+        await subscribe(alice, 'presence-chat.rw');
+        await subscribe(bob, 'presence-chat.rw');
+        List<Object?> self = collect(alice, 'client-typing');
+        Future<Object?> got = next(bob, 'client-typing');
+        expect(await whisperTo(alice, 'presence-chat.rw', 'hi'), ok);
+        expect(await got, <Object?>['presence-chat.rw', 'hi']);
+        await settle();
+        expect(self, isEmpty);
       } finally {
         await a.close();
         await b.close();
