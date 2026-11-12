@@ -38,8 +38,7 @@ class PresenceChannel extends Channel {
   const PresenceChannel(String name) : super('presence-$name');
 }
 
-/// An event that is sent to clients on channels, like `ShouldBroadcast`
-/// in Laravel. Send it with `Broadcast.event(event)` or
+/// An event that is sent to clients on channels. Send it with `Broadcast.event(event)` or
 /// `broadcast(event)`.
 /// ```
 /// class OrderShipped with ShouldBroadcast {
@@ -69,11 +68,10 @@ Future<void> broadcast(ShouldBroadcast event, {String? toOthers}) =>
     Broadcast.event(event, toOthers: toOthers);
 
 /// Channel rules, the socket `subscribe` events, the HTTP auth endpoint
-/// and the sending of [ShouldBroadcast] events. Like `Broadcast` in
-/// Laravel, on Socket.IO only.
+/// and the sending of [ShouldBroadcast] events. It works on Socket.IO only.
 ///
-/// The event names follow Laravel Echo's Socket.IO connector. The auth
-/// does not: the client gets a token from [authenticate] and sends it in
+/// The event names follow the Laravel Echo Socket.IO connector, so Echo
+/// clients work. The auth does not: the client gets a token from [authenticate] and sends it in
 /// `subscribe` itself.
 /// - client -> server: `subscribe` with `{channel, auth?}`, and
 ///   `unsubscribe` with `{channel}`. Both answer an ack with
