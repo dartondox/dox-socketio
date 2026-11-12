@@ -216,6 +216,104 @@ Limits:
 - During an outage (a dead Redis node or isolate), each presence join or leave of a channel waits up to `Broadcast.presenceTimeout` (default 2 seconds), one after another.
 - Presence joins and leaves of one channel run one after another in each isolate, so one isolate is exact. When two sockets of one user subscribe or leave at the same moment on two isolates or servers, `presence:joining` or `presence:leaving` can be missed or sent twice.
 
+### Queued broadcasting
+
+A broadcast can go through your queue, so the request does not wait for it. `dox_socketio` does not depend on `dox_queue`. You connect them with a hook and a small job.
+
+1. Mark the event with `ShouldBroadcastQueued` (in place of `ShouldBroadcast`):
+
+```dart
+class OrderShipped with ShouldBroadcastQueued {
+  OrderShipped(this.order);
+  final Order order;
+
+  @override
+  List<Channel> broadcastOn() => <Channel>[PrivateChannel('orders.${order.id}')];
+
+  @override
+  Map<String, Object?> broadcastWith() => <String, Object?>{'id': order.id};
+}
+
+await broadcast(OrderShipped(order)); // goes to the queue
+```
+
+2. Write the job, `lib/app/jobs/broadcast.job.dart`. Run `dart run build_runner build` after you add it.
+
+```dart
+import 'package:dox_queue/dox_queue.dart';
+import 'package:dox_socketio/dox_socketio.dart';
+
+/// Sends one queued broadcast to the clients.
+@Job()
+class BroadcastJob extends DoxJob {
+  BroadcastJob({required this.payload});
+
+  final Map<String, dynamic> payload;
+
+  @override
+  Future<void> handle() async {
+    await Broadcast.deliver(BroadcastPayload.fromJson(payload));
+  }
+}
+```
+
+3. Set the hook in a provider, `lib/providers/broadcast_provider.dart`:
+
+```dart
+import 'package:dox_core/dox_core.dart';
+import 'package:dox_queue/dox_queue.dart';
+import 'package:dox_socketio/dox_socketio.dart';
+
+import '../app/jobs/broadcast.job.dart';
+
+/// Puts ShouldBroadcastQueued events on the queue.
+class BroadcastProvider extends DoxProvider {
+  @override
+  void setup() {
+    Broadcast.useQueue(queueBroadcast);
+  }
+
+  static Future<void> queueBroadcast(BroadcastPayload payload) async {
+    await Queue.dispatch(BroadcastJob(payload: payload.toJson()));
+  }
+}
+```
+
+The payload is JSON: `{channels, event, data, except}`. `except` is the `toOthers` socket id.
+
+- The worker (`dart run bin/queue.dart`) is its own process. It starts your providers, so it gets its own Socket.IO server with the adapter of your config. Use the Redis adapter (`SocketIoConfig(adapter: ...)`), so `deliver` reaches the clients of the web server. Or set `Broadcast.emitter` in the worker.
+- `deliver` throws a `StateError` when the worker has no way to send (broadcasting is off and no `Broadcast.emitter`). It prints a warning once when it sends through an in-memory adapter with no clients, because then the clients of the web server do not get it.
+- With no hook set (`Broadcast.useQueue` not called), a `ShouldBroadcastQueued` event is sent at once, like a normal one. So tests and small apps work without a queue.
+- Normal `ShouldBroadcast` events never use the hook.
+- In tests, `Broadcast.fake()` keeps queued events too: `fake.assertQueued<OrderShipped>()`. `fake.delivered` holds the payloads that `deliver` got.
+
+### Whisper (client to client)
+
+A whisper lets a client send an event to the other members of a private or presence channel, for example "is typing". The server only passes it on. It is off by default, because it lets clients message each other:
+
+```dart
+SocketIoConfig(broadcasting: true, whisper: true);
+```
+
+The client sends `client event` with `{channel, event, data}`. The event name must start with `client-`. The other sockets in the channel get `<event>` with `(channel, data)`:
+
+```js
+socket.emit('client event', {
+  channel: 'presence-chat.lobby',
+  event: 'client-typing',
+  data: { name: 'Alice' },
+}, (ack) => console.log(ack)); // the ack is optional
+socket.on('client-typing', (channel, data) => console.log(channel, data));
+```
+
+- Only a socket that subscribed to the channel can whisper, and only on a private or presence channel.
+- The sender does not get its own whisper. Its other sockets do.
+- It works across isolates and servers with the adapters.
+- A whisper is dropped when the data is bigger than `Broadcast.maxWhisperSize` (default 10 KB of JSON). The ack is `{ok: false, error}` (`'not subscribed'`, `'data is too big'`, ...).
+- The `client-` prefix keeps a whisper apart from server events. Do not give a server event (`broadcastAs`) a name that starts with `client-`.
+- The wire format is the same as the Laravel Echo Socket.IO connector, so `channel.whisper('typing', data)` and `listenForWhisper('typing', ...)` of Echo work.
+- With whisper off, a `client event` is ignored, with no ack.
+
 ## Many servers
 
 Use the Redis adapter on each server:

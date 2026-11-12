@@ -102,6 +102,49 @@ class News with ShouldBroadcast {
   String broadcastAs() => 'news.posted';
 }
 
+class OrderPacked with ShouldBroadcastQueued {
+  OrderPacked(this.id);
+
+  final int id;
+
+  @override
+  List<Channel> broadcastOn() => <Channel>[
+    PrivateChannel('orders.$id'),
+    Channel('news'),
+  ];
+
+  @override
+  Map<String, Object?> broadcastWith() => <String, Object?>{'id': id};
+}
+
+/// Stands in for the dox_queue job of the docs. A real queue saves the
+/// constructor fields as JSON, so [queued] keeps the JSON text.
+class BroadcastJob {
+  BroadcastJob({required this.payload});
+
+  final Map<String, dynamic> payload;
+
+  Future<void> handle() =>
+      Broadcast.deliver(BroadcastPayload.fromJson(payload));
+}
+
+/// The saved jobs of the stand-in queue.
+List<String> queued = <String>[];
+
+/// The hook of the docs: `Queue.dispatch(BroadcastJob(...))`.
+Future<void> queueBroadcast(BroadcastPayload payload) async {
+  queued.add(jsonEncode(BroadcastJob(payload: payload.toJson()).payload));
+}
+
+/// The worker: loads each saved job and runs it.
+Future<void> runQueuedJobs() async {
+  for (String json in queued) {
+    Map<String, dynamic> payload = jsonDecode(json) as Map<String, dynamic>;
+    await BroadcastJob(payload: payload).handle();
+  }
+  queued.clear();
+}
+
 List<String> seenParams = <String>[];
 
 bool ownsOrder(Object? user, String id) =>
@@ -156,6 +199,22 @@ Future<Object?> unsubscribe(sio.Socket socket, String channel) {
   Completer<Object?> done = Completer<Object?>();
   socket.emitWithAck('unsubscribe', <String, Object?>{
     'channel': channel,
+  }, ack: done.complete);
+  return done.future.timeout(Duration(seconds: 5));
+}
+
+/// Sends a whisper and gives the ack.
+Future<Object?> whisperTo(
+  sio.Socket socket,
+  String channel,
+  Object? data, [
+  String event = 'client-typing',
+]) {
+  Completer<Object?> done = Completer<Object?>();
+  socket.emitWithAck('client event', <String, Object?>{
+    'channel': channel,
+    'event': event,
+    'data': data,
   }, ack: done.complete);
   return done.future.timeout(Duration(seconds: 5));
 }
@@ -215,7 +274,9 @@ void main() {
     Broadcast.maxChannelLength = 200;
     Broadcast.maxChannelsPerSocket = 100;
     Broadcast.presenceTimeout = const Duration(seconds: 2);
+    Broadcast.maxWhisperSize = 10 * 1024;
     Broadcast.reset();
+    queued.clear();
     if (!gate.isCompleted) gate.complete();
   });
 
@@ -563,6 +624,119 @@ void main() {
     });
   });
 
+  group('whisper', () {
+    setUp(() => Broadcast.whisper = true);
+
+    test('goes to the other members, not the sender', () async {
+      sio.Socket alice = await client('alice');
+      sio.Socket alice2 = await client('alice');
+      sio.Socket outside = await client('alice');
+      await subscribe(alice, 'private-orders.1');
+      await subscribe(alice2, 'private-orders.1');
+      List<Object?> self = collect(alice, 'client-typing');
+      List<Object?> got = collect(alice2, 'client-typing');
+      List<Object?> notGot = collect(outside, 'client-typing');
+      expect(
+        await whisperTo(alice, 'private-orders.1', <String, Object?>{'a': 1}),
+        ok,
+      );
+      await waitFor(got, 1, 'client-typing');
+      await settle(); // nothing on the sender or the socket outside
+      expect(got.single, <Object?>[
+        'private-orders.1',
+        <String, Object?>{'a': 1},
+      ]);
+      expect(self, isEmpty);
+      expect(notGot, isEmpty);
+    });
+
+    test('works on a presence channel', () async {
+      sio.Socket alice = await client('alice');
+      sio.Socket bob = await client('bob');
+      await subscribe(alice, 'presence-chat.w');
+      await subscribe(bob, 'presence-chat.w');
+      Future<Object?> got = next(bob, 'client-typing');
+      expect(await whisperTo(alice, 'presence-chat.w', 'hi'), ok);
+      expect(await got, <Object?>['presence-chat.w', 'hi']);
+    });
+
+    test('a socket that did not subscribe is blocked', () async {
+      sio.Socket alice = await client('alice');
+      sio.Socket member = await client('alice');
+      await subscribe(member, 'private-orders.1');
+      List<Object?> got = collect(member, 'client-typing');
+      expect(
+        await whisperTo(alice, 'private-orders.1', 1),
+        _err('not subscribed'),
+      );
+      await settle();
+      expect(got, isEmpty);
+    });
+
+    test('a public channel is blocked', () async {
+      sio.Socket a = await client();
+      sio.Socket b = await client();
+      await subscribe(a, 'news');
+      await subscribe(b, 'news');
+      List<Object?> got = collect(b, 'client-typing');
+      expect(
+        await whisperTo(a, 'news', 1),
+        _err('whisper needs a private or presence channel'),
+      );
+      await settle();
+      expect(got, isEmpty);
+    });
+
+    test('an event with no client- prefix is blocked', () async {
+      sio.Socket alice = await client('alice');
+      sio.Socket alice2 = await client('alice');
+      await subscribe(alice, 'private-orders.1');
+      await subscribe(alice2, 'private-orders.1');
+      List<Object?> got = collect(alice2, 'OrderShipped');
+      expect(
+        await whisperTo(alice, 'private-orders.1', 1, 'OrderShipped'),
+        _err('event must start with client-'),
+      );
+      await settle();
+      expect(got, isEmpty);
+    });
+
+    test('too big data is dropped', () async {
+      Broadcast.maxWhisperSize = 10;
+      sio.Socket alice = await client('alice');
+      sio.Socket alice2 = await client('alice');
+      await subscribe(alice, 'private-orders.1');
+      await subscribe(alice2, 'private-orders.1');
+      List<Object?> got = collect(alice2, 'client-typing');
+      expect(
+        await whisperTo(alice, 'private-orders.1', 'x' * 20),
+        _err('data is too big'),
+      );
+      expect(await whisperTo(alice, 'private-orders.1', 'small'), ok);
+      await waitFor(got, 1, 'client-typing');
+      await settle();
+      expect(got, hasLength(1));
+    });
+
+    test('off: the event is ignored, with no ack', () async {
+      Broadcast.whisper = false;
+      sio.Socket alice = await client('alice');
+      sio.Socket alice2 = await client('alice');
+      await subscribe(alice, 'private-orders.1');
+      await subscribe(alice2, 'private-orders.1');
+      List<Object?> got = collect(alice2, 'client-typing');
+      await expectLater(
+        whisperTo(
+          alice,
+          'private-orders.1',
+          1,
+        ).timeout(const Duration(milliseconds: 500)),
+        throwsA(isA<TimeoutException>()),
+      );
+      expect(got, isEmpty);
+    });
+  });
+
   group('http auth', () {
     Future<http.Response> auth(String? user, String socketId, String channel) {
       return http.post(
@@ -616,6 +790,87 @@ void main() {
       expect((await auth('bob', 'sid', 'private-orders.1')).statusCode, 403);
       expect((await auth(null, 'sid', 'private-orders.1')).statusCode, 403);
       expect((await auth('alice', '', 'private-orders.1')).statusCode, 403);
+    });
+  });
+
+  group('queued', () {
+    test('the hook gets the payload, the job delivers it', () async {
+      Broadcast.useQueue(queueBroadcast);
+      sio.Socket alice = await client('alice');
+      sio.Socket other = await client('alice');
+      expect(await subscribe(alice, 'private-orders.1'), ok);
+      await subscribe(other, 'private-orders.1');
+      List<Object?> got = collect(alice, 'OrderPacked');
+      List<Object?> gotOther = collect(other, 'OrderPacked');
+      await Broadcast.event(OrderPacked(1), toOthers: other.id);
+      expect(queued, hasLength(1));
+      expect(jsonDecode(queued.single), <String, Object?>{
+        'channels': <String>['private-orders.1', 'news'],
+        'event': 'OrderPacked',
+        'data': <String, Object?>{'id': 1},
+        'except': other.id,
+      });
+      await settle();
+      expect(got, isEmpty); // not sent yet
+      await runQueuedJobs();
+      await waitFor(got, 1, 'OrderPacked');
+      await settle();
+      expect(got.single, <Object?>[
+        'private-orders.1',
+        <String, Object?>{'id': 1},
+      ]);
+      expect(gotOther, isEmpty); // toOthers
+    });
+
+    test('a normal event skips the hook', () async {
+      Broadcast.useQueue(queueBroadcast);
+      sio.Socket a = await client();
+      await subscribe(a, 'news');
+      Future<Object?> got = next(a, 'news.posted');
+      await Broadcast.event(News());
+      await got;
+      expect(queued, isEmpty);
+    });
+
+    test('with no hook a queued event is sent at once', () async {
+      sio.Socket a = await client();
+      await subscribe(a, 'news');
+      Future<Object?> got = next(a, 'OrderPacked');
+      await Broadcast.event(OrderPacked(9));
+      expect(await got, <Object?>[
+        'news',
+        <String, Object?>{'id': 9},
+      ]);
+      Broadcast.useQueue(queueBroadcast);
+      Broadcast.useQueue(null);
+      await Broadcast.event(OrderPacked(9));
+      expect(queued, isEmpty);
+    });
+
+    test('deliver with nowhere to send throws', () {
+      Broadcast.reset();
+      expect(
+        () => Broadcast.deliver(
+          BroadcastPayload(channels: <String>['news'], event: 'e'),
+        ),
+        throwsStateError,
+      );
+    });
+
+    test('the fake records queued events and deliveries', () async {
+      Broadcast.useQueue(queueBroadcast);
+      BroadcastFake fake = Broadcast.fake();
+      await Broadcast.event(OrderPacked(5));
+      await Broadcast.event(News());
+      expect(queued, isEmpty);
+      fake.assertQueued<OrderPacked>();
+      fake.assertQueued<OrderPacked>((OrderPacked e) => e.id == 5);
+      expect(fake.broadcasted.last.queued, isFalse);
+      expect(() => fake.assertQueued<News>(), throwsA(isA<AssertionError>()));
+      await Broadcast.deliver(
+        BroadcastPayload(channels: <String>['news'], event: 'e'),
+      );
+      expect(fake.delivered.single.event, 'e');
     });
   });
 
@@ -694,6 +949,77 @@ void main() {
       } finally {
         await a.close();
         await b.close();
+      }
+    });
+
+    test('a whisper reaches a member on the other server', () async {
+      SocketIoServer a = SocketIoServer(
+        adapter: newAdapter(RedisFormat.msgpack, 'broadcast-whisper'),
+      );
+      SocketIoServer b = SocketIoServer(
+        adapter: newAdapter(RedisFormat.msgpack, 'broadcast-whisper'),
+      );
+      for (SocketIoServer io in <SocketIoServer>[a, b]) {
+        io.use(MainNamespace().login);
+        Broadcast.listen(io.sockets);
+      }
+      Broadcast.whisper = true;
+      String urlA = 'http://127.0.0.1:${(await a.listen(0)).port}';
+      String urlB = 'http://127.0.0.1:${(await b.listen(0)).port}';
+      try {
+        sio.Socket alice = await connectClient(
+          urlA,
+          '',
+          auth: <String, String>{'token': 'alice'},
+        );
+        sio.Socket bob = await connectClient(
+          urlB,
+          '',
+          auth: <String, String>{'token': 'bob'},
+        );
+        clients.addAll(<sio.Socket>[alice, bob]);
+        await subscribe(alice, 'presence-chat.rw');
+        await subscribe(bob, 'presence-chat.rw');
+        List<Object?> self = collect(alice, 'client-typing');
+        Future<Object?> got = next(bob, 'client-typing');
+        expect(await whisperTo(alice, 'presence-chat.rw', 'hi'), ok);
+        expect(await got, <Object?>['presence-chat.rw', 'hi']);
+        await settle();
+        expect(self, isEmpty);
+      } finally {
+        await a.close();
+        await b.close();
+      }
+    });
+
+    test('a queue worker delivers through the Redis adapter', () async {
+      SocketIoServer server = SocketIoServer(
+        adapter: newAdapter(RedisFormat.msgpack, 'broadcast-queue'),
+      );
+      // the worker process: the same provider, so the same adapter, and
+      // no clients
+      SocketIoServer worker = SocketIoServer(
+        adapter: newAdapter(RedisFormat.msgpack, 'broadcast-queue'),
+      );
+      server.use(MainNamespace().login);
+      Broadcast.listen(server.sockets);
+      String url = 'http://127.0.0.1:${(await server.listen(0)).port}';
+      try {
+        sio.Socket a = await connectClient(url, '');
+        clients.add(a);
+        await subscribe(a, 'news');
+        Broadcast.useQueue(queueBroadcast);
+        await Broadcast.event(OrderPacked(7));
+        Broadcast.listen(worker.sockets);
+        Future<Object?> got = next(a, 'OrderPacked');
+        await runQueuedJobs();
+        expect(await got, <Object?>[
+          'news',
+          <String, Object?>{'id': 7},
+        ]);
+      } finally {
+        await server.close();
+        await worker.close();
       }
     });
 

@@ -1,6 +1,6 @@
 ---
 name: dox-socketio-guide
-description: Use when you add realtime to a Dox (Dart) app with dox_socketio. Covers the SocketIoProvider and config, namespaces, events and acks, rooms, socket login with SocketAuth, many isolates or servers (Redis adapter), emitting from a queue job, and broadcasting on public, private and presence channels.
+description: Use when you add realtime to a Dox (Dart) app with dox_socketio. Covers the SocketIoProvider and config, namespaces, events and acks, rooms, socket login with SocketAuth, many isolates or servers (Redis adapter), emitting from a queue job, and broadcasting on public, private and presence channels (also queued broadcasts and client whispers).
 ---
 
 # dox_socketio guide
@@ -25,7 +25,7 @@ SocketIoConfig socketIoConfig = SocketIoConfig(
 );
 ```
 
-`SocketIoConfig` options: `enabled` (default `true`), `options` (`ServerOptions()`), `namespaces` (`[]`), `adapter` (null), `broadcasting` (default `false`).
+`SocketIoConfig` options: `enabled` (default `true`), `options` (`ServerOptions()`), `namespaces` (`[]`), `adapter` (null), `broadcasting` (default `false`), `whisper` (default `false`, needs `broadcasting`).
 
 3. Create the provider in `lib/providers/socketio_provider.dart`. The generated container finds it, so run `dart run build_runner build` after you add it.
 
@@ -241,6 +241,8 @@ Client: on a socket of the `/` namespace (`const socket = io(url)`, not `io(url 
 
 In a process with no Socket.IO server, set `Broadcast.emitter = SocketIoEmitter(redis)`.
 
+Whisper (client to client, for example "is typing"): turn it on with `SocketIoConfig(broadcasting: true, whisper: true)`. A socket that subscribed to a private or presence channel sends `socket.emit('client event', {channel: 'presence-chat.lobby', event: 'client-typing', data: {name: 'Alice'}})`. The other sockets in the channel (not the sender) get `socket.on('client-typing', (channel, data) => ...)`, on all servers. The event name must start with `client-`. Public channels, sockets that did not subscribe and data over `Broadcast.maxWhisperSize` (10 KB of JSON) are dropped.
+
 ### 9. Test broadcasting
 
 ```dart
@@ -250,6 +252,77 @@ fake.assertBroadcasted<OrderShipped>();
 fake.assertBroadcastedOn<OrderShipped>('private-orders.5');
 Broadcast.restore();
 ```
+
+### 10. Queued broadcasting
+
+A broadcast can go through your queue, so the request does not wait for it. `dox_socketio` does not depend on `dox_queue`. You connect them with a hook and a small job.
+
+1. Mark the event with `ShouldBroadcastQueued` (in place of `ShouldBroadcast`):
+
+```dart
+class OrderShipped with ShouldBroadcastQueued {
+  OrderShipped(this.order);
+  final Order order;
+
+  @override
+  List<Channel> broadcastOn() => <Channel>[PrivateChannel('orders.${order.id}')];
+
+  @override
+  Map<String, Object?> broadcastWith() => <String, Object?>{'id': order.id};
+}
+
+await broadcast(OrderShipped(order)); // goes to the queue
+```
+
+2. Write the job, `lib/app/jobs/broadcast.job.dart`. Run `dart run build_runner build` after you add it.
+
+```dart
+import 'package:dox_queue/dox_queue.dart';
+import 'package:dox_socketio/dox_socketio.dart';
+
+/// Sends one queued broadcast to the clients.
+@Job()
+class BroadcastJob extends DoxJob {
+  BroadcastJob({required this.payload});
+
+  final Map<String, dynamic> payload;
+
+  @override
+  Future<void> handle() async {
+    await Broadcast.deliver(BroadcastPayload.fromJson(payload));
+  }
+}
+```
+
+3. Set the hook in a provider, `lib/providers/broadcast_provider.dart`:
+
+```dart
+import 'package:dox_core/dox_core.dart';
+import 'package:dox_queue/dox_queue.dart';
+import 'package:dox_socketio/dox_socketio.dart';
+
+import '../app/jobs/broadcast.job.dart';
+
+/// Puts ShouldBroadcastQueued events on the queue.
+class BroadcastProvider extends DoxProvider {
+  @override
+  void setup() {
+    Broadcast.useQueue(queueBroadcast);
+  }
+
+  static Future<void> queueBroadcast(BroadcastPayload payload) async {
+    await Queue.dispatch(BroadcastJob(payload: payload.toJson()));
+  }
+}
+```
+
+The payload is JSON: `{channels, event, data, except}`. `except` is the `toOthers` socket id.
+
+- The worker (`dart run bin/queue.dart`) is its own process. It starts your providers, so it gets its own Socket.IO server with the adapter of your config. Use the Redis adapter (`SocketIoConfig(adapter: ...)`), so `deliver` reaches the clients of the web server. Or set `Broadcast.emitter` in the worker.
+- `deliver` throws a `StateError` when the worker has no way to send (broadcasting is off and no `Broadcast.emitter`). It prints a warning once when it sends through an in-memory adapter with no clients, because then the clients of the web server do not get it.
+- With no hook set (`Broadcast.useQueue` not called), a `ShouldBroadcastQueued` event is sent at once, like a normal one. So tests and small apps work without a queue.
+- Normal `ShouldBroadcast` events never use the hook.
+- In tests, `Broadcast.fake()` keeps queued events too: `fake.assertQueued<OrderShipped>()`. `fake.delivered` holds the payloads that `deliver` got.
 
 ## Gotchas
 
@@ -262,5 +335,7 @@ Broadcast.restore();
 - A namespace added with `io.of('/x')` in only one isolate makes `fetchSockets` wait and throw. Put namespaces in the config so every isolate adds them.
 - `maxSessions` counts per isolate. With 4 isolates the app allows 4 times the value.
 - Broadcasting runs on one namespace only: `/` with `SocketIoConfig(broadcasting: true)`. `Broadcast.listen(nsp)` on a plain server picks another one, and `Broadcast.event` sends through the last one listened. A `subscribe` on a namespace that is not listened gets no answer.
+- A queued broadcast (`ShouldBroadcastQueued`) runs `Broadcast.deliver` in the queue worker. With the in-memory or isolate adapter the clients of the web server do not get it. Use the Redis adapter.
+- Whisper is off by default. With it off, a `client event` gets no answer. Do not name a server event `client-...`.
 - Broadcast limits: `Broadcast.maxChannelLength` (200), `Broadcast.maxChannelsPerSocket` (100), `Broadcast.presenceTimeout` (2 seconds).
 - Standalone, without Dox: `SocketIoServer io = SocketIoServer(); io.register(ChatNamespace()); await io.listen(3001);`.
