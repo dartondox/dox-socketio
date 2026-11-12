@@ -106,7 +106,7 @@ static Future<User?> findUser(Handshake handshake) async {
 - The Redis adapter uses the message format of `@socket.io/redis-adapter`. Dox and Node.js servers can share one Redis.
 - `fetchSockets`, `socketsJoin`, `socketsLeave`, `disconnectSockets`, `serverSideEmit` and broadcast acks work across all servers.
 - `SocketIoEmitter` sends events from any Dart program, like `@socket.io/redis-emitter`.
-- Broadcasting with public, private and presence channels, like Laravel (opt-in).
+- Broadcasting with public, private and presence channels (opt-in).
 
 ## Origins
 
@@ -144,7 +144,7 @@ Both are null by default: all requests are allowed and there is no limit.
 
 ## Broadcasting
 
-Send server events to channels, like Laravel broadcasting. It is off by default. Turn it on in the config (or call `Broadcast.listen(io.sockets)` on a plain server):
+Send server events to channels. It is off by default. Turn it on in the config (or call `Broadcast.listen(io.sockets)` on a plain server):
 
 ```dart
 SocketIoConfig(broadcasting: true, namespaces: <NamespaceHandler>[ChatNamespace()]);
