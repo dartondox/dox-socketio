@@ -196,7 +196,7 @@ Other options: `path` (`/socket.io/`), `pingInterval` (25 s), `pingTimeout` (20 
 
 ### 8. Broadcasting (public, private, presence channels)
 
-Turn it on with `SocketIoConfig(broadcasting: true, ...)`. Add channel rules in every isolate, for example in a `DoxProvider.setup()`:
+Turn it on with `SocketIoConfig(broadcasting: true, ...)`. It listens on the default `/` namespace only (`io.sockets`). The `subscribe` and `unsubscribe` events work there, not on `/chat` or any other namespace you add. The client must connect to `/`, like `io(url)`, for channels. Add channel rules in every isolate, for example in a `DoxProvider.setup()`:
 
 ```dart
 Broadcast.channel('orders.{id}', (Object? user, String id) {
@@ -237,7 +237,7 @@ await Broadcast.event(OrderShipped(order), toOthers: Broadcast.socketId(req));
 
 Channels: `Channel('news')`, `PrivateChannel('orders.5')` (name `private-orders.5`), `PresenceChannel('chat.lobby')` (name `presence-chat.lobby`). Rules have no prefix. The first matching rule wins.
 
-Client: `socket.emit('subscribe', {channel, auth}, ack)` inside the `connect` handler (a reconnect makes a new socket with no channels). Events arrive as `socket.on('order.shipped', (channel, payload) => ...)`. A socket logged in with `SocketAuth` needs no `auth`. Otherwise `POST /broadcasting/auth` with `socket_id` and `channel_name` returns `{auth: token}`. Presence channels also send `presence:subscribed`, `presence:joining`, `presence:leaving`. Leave with `socket.emit('unsubscribe', {channel})`.
+Client: on a socket of the `/` namespace (`const socket = io(url)`, not `io(url + "/chat")`), call `socket.emit('subscribe', {channel, auth}, ack)` inside the `connect` handler (a reconnect makes a new socket with no channels). Events arrive as `socket.on('order.shipped', (channel, payload) => ...)`. A socket logged in with `SocketAuth` on the `/` namespace (`io.use(SocketAuth(findUser).handle)`) needs no `auth`. `SocketAuth` on `/chat` (recipe 5) does not log in the `/` socket. Otherwise `POST /broadcasting/auth` with `socket_id` and `channel_name` returns `{auth: token}`. Presence channels also send `presence:subscribed`, `presence:joining`, `presence:leaving`. Leave with `socket.emit('unsubscribe', {channel})`.
 
 In a process with no Socket.IO server, set `Broadcast.emitter = SocketIoEmitter(redis)`.
 
@@ -261,6 +261,6 @@ Broadcast.restore();
 - `fetchSockets` throws a `TimeoutException`, and `serverSideEmitWithAck` or a broadcast `emitWithAck` throws an `AckTimeoutException` (with `responses`), when a server or client does not answer in time. Default `requestsTimeout` is 5 seconds.
 - A namespace added with `io.of('/x')` in only one isolate makes `fetchSockets` wait and throw. Put namespaces in the config so every isolate adds them.
 - `maxSessions` counts per isolate. With 4 isolates the app allows 4 times the value.
-- Turn broadcasting on for one namespace only. `Broadcast.event` sends through the last one listened.
+- Broadcasting runs on one namespace only: `/` with `SocketIoConfig(broadcasting: true)`. `Broadcast.listen(nsp)` on a plain server picks another one, and `Broadcast.event` sends through the last one listened. A `subscribe` on a namespace that is not listened gets no answer.
 - Broadcast limits: `Broadcast.maxChannelLength` (200), `Broadcast.maxChannelsPerSocket` (100), `Broadcast.presenceTimeout` (2 seconds).
 - Standalone, without Dox: `SocketIoServer io = SocketIoServer(); io.register(ChatNamespace()); await io.listen(3001);`.
