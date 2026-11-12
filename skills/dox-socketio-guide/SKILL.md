@@ -38,7 +38,7 @@ class AppSocketIoProvider extends SocketIoProvider {
 }
 ```
 
-4. Add an env getter and key if you use `env.socketioEnabled`: `bool get socketioEnabled => false;` in `lib/config/env.dart`, and `SOCKETIO_ENABLED=true` in `.env`.
+4. Add an env getter and key if you use `env.socketioEnabled`: `bool get socketioEnabled => false;` in `lib/config/env.dart`, and `SOCKETIO_ENABLED=true` in `.env`. Then run `dart run build_runner build` to update `lib/config/env.g.dart`.
 
 ## Recipes
 
