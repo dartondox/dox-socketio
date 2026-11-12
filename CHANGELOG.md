@@ -1,5 +1,6 @@
 ## Unreleased
 
+- Ships an AI agent skill (dox-socketio-guide). Install it in your app with `dart run skills@ get`.
 - New: broadcasting, like Laravel. It is off by default. Turn it on with `SocketIoConfig(broadcasting: true)`, or call `Broadcast.listen(io.sockets)` on a plain server.
   - `Broadcast.channel('orders.{id}', rule)` adds a rule for private and presence channels. The rule gets the user and the `{name}` values.
   - `Channel`, `PrivateChannel` and `PresenceChannel` make the channel names (`news`, `private-...`, `presence-...`).
