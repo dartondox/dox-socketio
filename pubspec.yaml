@@ -5,7 +5,7 @@ repository: https://github.com/dartondox/dox-socketio
 homepage: https://dartondox.dev
 
 environment:
-  sdk: ^3.13.0
+  sdk: ^3.14.0
 
 dependencies:
   crypto: ^3.0.8
