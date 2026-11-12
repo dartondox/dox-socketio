@@ -2,13 +2,17 @@ import 'broadcast.dart';
 
 /// An event that `Broadcast.event()` got while `Broadcast.fake()` was on.
 class BroadcastedEvent {
-  const BroadcastedEvent(this.event, {this.toOthers});
+  const BroadcastedEvent(this.event, {this.toOthers, this.queued = false});
 
   /// The event, as it was sent.
   final ShouldBroadcast event;
 
   /// The socket id of `toOthers`, or null.
   final String? toOthers;
+
+  /// True for a [ShouldBroadcastQueued] event, that goes to the queue
+  /// hook when the fake is off.
+  final bool queued;
 
   /// The channel names of the event.
   List<String> get channels => event.broadcastOn().map(_name).toList();
@@ -23,6 +27,9 @@ class BroadcastedEvent {
 class BroadcastFake {
   /// Every sent event, oldest first.
   final List<BroadcastedEvent> broadcasted = <BroadcastedEvent>[];
+
+  /// Every payload that `Broadcast.deliver()` got, oldest first.
+  final List<BroadcastPayload> delivered = <BroadcastPayload>[];
 
   /// The sent events of type [T].
   List<T> eventsOf<T extends ShouldBroadcast>() {
@@ -42,6 +49,19 @@ class BroadcastFake {
         'Expected $T that passes the test to be broadcast, but none of '
         'the ${events.length} sent did.',
       );
+    }
+  }
+
+  /// A [ShouldBroadcastQueued] event of type [T] was sent. With [test],
+  /// one of them must pass it.
+  void assertQueued<T extends ShouldBroadcast>([bool Function(T event)? test]) {
+    List<T> events = broadcasted
+        .where(_queued)
+        .map(_event)
+        .whereType<T>()
+        .toList();
+    if (events.isEmpty || (test != null && !events.any(test))) {
+      throw AssertionError('Expected $T to be queued. ${_summary()}');
     }
   }
 
@@ -83,12 +103,17 @@ class BroadcastFake {
   }
 
   /// Forgets the sent events.
-  void clear() => broadcasted.clear();
+  void clear() {
+    broadcasted.clear();
+    delivered.clear();
+  }
 
   String _summary() {
     if (broadcasted.isEmpty) return 'No events were broadcast.';
     return 'Broadcast: ${broadcasted.map(_typeName).join(', ')}.';
   }
+
+  static bool _queued(BroadcastedEvent sent) => sent.queued;
 
   static ShouldBroadcast _event(BroadcastedEvent sent) => sent.event;
 
