@@ -11,6 +11,8 @@ For routes, controllers and app layout, see the `dox-core-guide` skill.
 
 ## Install and register
 
+Fast way: `dox add socketio` (add `--broadcasting` to turn on broadcasting). It adds the package, the config, the provider, the `socketioEnabled` getter and `SOCKETIO_ENABLED=true`. It never overwrites a file. The steps below are the same by hand.
+
 1. `dart pub add dox_socketio`
 2. Create the config in `lib/config/socketio.dart`:
 
