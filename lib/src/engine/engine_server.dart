@@ -55,14 +55,13 @@ class EngineServer implements EngineSessionStore {
   /// Writes the open-origin warning once, when no `allowedOrigins` is set.
   /// It runs when the server starts to serve, not when it is made. A queue
   /// or schedule process makes the server but never serves, so it stays
-  /// quiet.
+  /// quiet. [SocketIoServer.attach] and the Dox provider call it.
   void warnIfOpenOrigin() {
     if (options.allowedOrigins == null) warnOpenOriginOnce();
   }
 
   /// Handles one HTTP request for the Engine.IO path.
   Future<void> handle(HttpRequest request) async {
-    warnIfOpenOrigin();
     HttpResponse response = request.response;
     CorsOptions? cors = options.cors;
     if (cors != null) _applyCors(request, cors);
