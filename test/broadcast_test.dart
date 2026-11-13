@@ -279,6 +279,9 @@ void main() {
       AppConfig(
         appKey: '4HyiSrq4N5Nfg6bOadIhbFEI8zbUkpxt',
         serverPort: 0,
+        // Not all interfaces. On macOS another program may take the same
+        // port on 127.0.0.1 and get our connections. The test then gets 404.
+        host: '127.0.0.1',
         totalIsolate: 1,
         routers: <Router>[BroadcastRouter()],
         providers: <DoxProvider>[
