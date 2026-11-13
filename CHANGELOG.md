@@ -1,5 +1,6 @@
 ## Unreleased
 
+- New: `dox add socketio` (the `socketio:install` command). It adds the config, the provider, the `socketioEnabled` getter and `SOCKETIO_ENABLED`. `--broadcasting` turns on broadcasting. It never overwrites a file. New dependency: `dox_annotation`.
 - Fix: a presence rule that returned no `id` made `user_id` the socket id when the socket was logged in. The same user then showed as a new member on each connection. `user_id` is now the user id, as in the HTTP auth route. The socket id is used only when the user has no id.
 - Ships an AI agent skill (dox-socketio-guide). Install it in your app with `dart run skills@ get`.
 - New: broadcasting, like Laravel. It is off by default. Turn it on with `SocketIoConfig(broadcasting: true)`, or call `Broadcast.listen(io.sockets)` on a plain server.
