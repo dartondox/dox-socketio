@@ -64,7 +64,8 @@ class MainNamespace extends NamespaceHandler {
   @override
   List<Middleware> get middleware => <Middleware>[login];
 
-  void login(Socket socket) => socket.user = users[socket.handshake.token];
+  void login(Socket socket) => socket.user =
+      users[socket.handshake.token] ?? objectUsers[socket.handshake.token];
 
   @override
   void onConnection(Socket socket) {}
@@ -156,9 +157,31 @@ Map<String, Object?>? chatMember(Object? user, String room) {
   return <String, Object?>{'id': u['id'], 'name': u['name']};
 }
 
+/// a user class with an id getter
+class IdUser {
+  int get id => 7;
+}
+
+/// like a dox_orm model: a custom primary key, and an id getter that lies
+class ModelLike {
+  String get primaryKey => 'uid';
+  int get id => 999;
+
+  Map<String, Object?> toMap({bool original = false}) => <String, Object?>{
+    'uid': 42,
+  };
+}
+
+class NoIdUser {}
+
+Map<String, Object> objectUsers = <String, Object>{
+  'idUser': IdUser(),
+  'modelLike': ModelLike(),
+  'noId': NoIdUser(),
+};
+
 Map<String, Object?> noIdMember(Object? user, String room) {
-  Map<String, Object?> u = user! as Map<String, Object?>;
-  return <String, Object?>{'name': u['name']};
+  return <String, Object?>{'name': user is Map ? user['name'] : 'x'};
 }
 
 bool teamUser(Object? user, String team, String member) {
@@ -392,6 +415,33 @@ void main() {
         ]);
       },
     );
+
+    test('presence user_id of other user classes', () async {
+      Future<Object?> memberOf(String name, String room) async {
+        sio.Socket socket = await client(name);
+        Future<Object?> here = next(socket, 'presence:subscribed');
+        expect(await subscribe(socket, 'presence-noid.$room'), ok);
+        List<Object?> data = (await here)! as List<Object?>;
+        List<Object?> members = data[1]! as List<Object?>;
+        return (members.single! as Map<Object?, Object?>)['user_id'];
+      }
+
+      /// a class with an id getter
+      expect(await memberOf('idUser', 'a'), 7);
+
+      /// a model: the primary key, not the id getter
+      expect(await memberOf('modelLike', 'b'), 42);
+
+      /// no id: the socket id
+      sio.Socket guest = await client('noId');
+      Future<Object?> here = next(guest, 'presence:subscribed');
+      expect(await subscribe(guest, 'presence-noid.c'), ok);
+      List<Object?> data = (await here)! as List<Object?>;
+      Map<Object?, Object?> member =
+          (data[1]! as List<Object?>).single! as Map<Object?, Object?>;
+      expect(member['user_id'], isA<String>());
+      expect(member['user_id'], isNotEmpty);
+    });
 
     test('a second listen on one namespace adds no handler', () async {
       Broadcast.listen(SocketIoProvider.server!.sockets);

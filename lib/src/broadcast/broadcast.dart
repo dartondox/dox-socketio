@@ -523,14 +523,22 @@ class Broadcast {
     return <String, Object?>{'user_id': info['id'] ?? id, 'user_info': info};
   }
 
-  /// The id of a logged-in user: `user['id']` for a map, else the `id`
-  /// of the object. Null when it has none, like `req.auth?.id()`.
+  /// The id of a logged-in user, like `req.auth?.id()`: `user['id']` for
+  /// a map, the primary key for a dox_orm model (read with
+  /// `toMap(original: true)`, even when it is hidden), else the `id` of the
+  /// object. Null when there is none, or when reading it throws.
   static Object? _userId(Object? user) {
     if (user is Map) return user['id'];
+    // ponytail: dynamic calls, dox_socketio does not depend on dox_orm
     try {
-      // ponytail: dynamic call, a user model may have any class
+      Object? key = (user as dynamic).primaryKey;
+      if (key is String) return (user as dynamic).toMap(original: true)[key];
+    } catch (_) {
+      // not a model: use its id
+    }
+    try {
       return (user as dynamic).id;
-    } on NoSuchMethodError {
+    } catch (_) {
       return null;
     }
   }
