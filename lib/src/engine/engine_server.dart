@@ -37,7 +37,6 @@ class EngineServer implements EngineSessionStore {
         '"*" is not allowed.',
       );
     }
-    if (options.allowedOrigins == null) warnOpenOriginOnce();
   }
 
   final ServerOptions options;
@@ -53,8 +52,17 @@ class EngineServer implements EngineSessionStore {
   /// Number of open sessions.
   int get clientsCount => _sessions.length;
 
+  /// Writes the open-origin warning once, when no `allowedOrigins` is set.
+  /// It runs when the server starts to serve, not when it is made. A queue
+  /// or schedule process makes the server but never serves, so it stays
+  /// quiet.
+  void warnIfOpenOrigin() {
+    if (options.allowedOrigins == null) warnOpenOriginOnce();
+  }
+
   /// Handles one HTTP request for the Engine.IO path.
   Future<void> handle(HttpRequest request) async {
+    warnIfOpenOrigin();
     HttpResponse response = request.response;
     CorsOptions? cors = options.cors;
     if (cors != null) _applyCors(request, cors);

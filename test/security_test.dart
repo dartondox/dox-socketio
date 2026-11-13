@@ -160,19 +160,38 @@ void main() {
       expect(await poll(<String, String>{'origin': 'http://other.test'}), 200);
     });
 
-    test('logs one warning, and none when allowedOrigins is set', () {
+    test('making a server prints nothing (queue and schedule)', () {
       List<String> lines = <String>[];
       originWarningDone = false;
       IOOverrides.runZoned(() {
-        SocketIoServer(options: ServerOptions(allowedOrigins: <String>[]));
-        SocketIoServer(options: ServerOptions());
         SocketIoServer(options: ServerOptions());
         SocketIoServer(options: ServerOptions(cors: CorsOptions()));
       }, stderr: () => _LineSink(lines));
-      expect(lines, hasLength(1));
-      expect(lines.single, contains('Any website can open a socket'));
-      expect(lines.single, contains('ServerOptions(allowedOrigins:'));
+      expect(lines, isEmpty);
     });
+
+    test(
+      'serving logs one warning, and none when allowedOrigins is set',
+      () async {
+        List<String> lines = <String>[];
+        originWarningDone = false;
+        await IOOverrides.runZoned(() async {
+          for (ServerOptions options in <ServerOptions>[
+            ServerOptions(allowedOrigins: <String>[]),
+            ServerOptions(),
+            ServerOptions(),
+            ServerOptions(cors: CorsOptions()),
+          ]) {
+            SocketIoServer io = SocketIoServer(options: options);
+            await io.listen(0);
+            await io.close();
+          }
+        }, stderr: () => _LineSink(lines));
+        expect(lines, hasLength(1));
+        expect(lines.single, contains('Any website can open a socket'));
+        expect(lines.single, contains('ServerOptions(allowedOrigins:'));
+      },
+    );
   });
 
   group('allowedOrigins null, cors list (like 3.0.0)', () {

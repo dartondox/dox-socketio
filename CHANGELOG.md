@@ -1,5 +1,6 @@
 ## Unreleased
 
+- Fix: the warning "Socket.IO does not check the Origin header" also printed in `bin/queue.dart` and `bin/schedule.dart`. Those processes never accept sockets. Now it prints only when the server starts to serve (`attach`, `listen`, or the first request in the web server). It still prints once per isolate. `handshake.session()` already warned only on a real connection.
 - New: `dox add socketio` (the `socketio:install` command). It adds the config, the provider, the `socketioEnabled` getter and `SOCKETIO_ENABLED`. `--broadcasting` turns on broadcasting. It never overwrites a file. New dependency: `dox_annotation`.
 - Fix: a presence rule that returned no `id` made `user_id` the socket id when the socket was logged in. The same user then showed as a new member on each connection. `user_id` is now the user id, as in the HTTP auth route. The socket id is used only when the user has no id.
 - Ships an AI agent skill (dox-socketio-guide). Install it in your app with `dart run skills@ get`.

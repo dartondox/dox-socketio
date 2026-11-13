@@ -151,6 +151,7 @@ class SocketIoServer implements EngineConnectionListener {
   /// Handles the Socket.IO requests of [server]. Other requests get 404.
   void attach(HttpServer server) {
     _httpServer = server;
+    engine.warnIfOpenOrigin();
     server.listen(_onHttpRequest);
   }
 
