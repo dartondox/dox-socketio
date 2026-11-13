@@ -11,7 +11,7 @@ import 'package:test/test.dart';
 import 'support/node_runner.dart';
 import 'support/test_app.dart';
 
-String get baseUrl => 'http://localhost:${Dox().server.httpServer.port}';
+String get baseUrl => 'http://127.0.0.1:${Dox().server.httpServer.port}';
 
 /// the official socket.io-client scripts of dox_socketio
 final String interopDir = Directory('test/interop').absolute.path;
@@ -29,6 +29,9 @@ AppConfig config = AppConfig(
   appKey: '4HyiSrq4N5Nfg6bOadIhbFEI8zbUkpxt',
   // the OS picks a free port, so test files can run in parallel
   serverPort: 0,
+  // Not all interfaces. On macOS another program may take the same port on
+  // 127.0.0.1 and get our connections.
+  host: '127.0.0.1',
   totalIsolate: 1,
   routers: <Router>[PingRouter()],
   providers: <DoxProvider>[
