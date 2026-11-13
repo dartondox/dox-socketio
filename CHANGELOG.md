@@ -1,4 +1,4 @@
-## Unreleased
+## 3.2.0
 
 - Fix: the warning "Socket.IO does not check the Origin header" also printed in `bin/queue.dart` and `bin/schedule.dart`. Those processes never accept sockets. In a Dox app it now prints only in the web server (`Dox().isWebServer`, needs the dox_core release that has it), at start. A plain server prints it in `attach()` and `listen()`. It still prints once per isolate.
 - New: `dox add socketio` (the `socketio:install` command). It adds the config, the provider, the `socketioEnabled` getter and `SOCKETIO_ENABLED`. `--broadcasting` turns on broadcasting. It never overwrites a file. New dependency: `dox_annotation`.
