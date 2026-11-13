@@ -50,7 +50,15 @@ class SocketIoInstallCommand extends Command {
     await installer.addDependency('dox_builder', dev: true);
     await installer.addDependency('build_runner', dev: true);
 
-    installer.writeFile('lib/config/socketio.dart', config(app, broadcasting));
+    bool madeConfig = installer.writeFile(
+      'lib/config/socketio.dart',
+      config(app, broadcasting),
+    );
+    if (broadcasting && !madeConfig) {
+      installer.note(
+        'skipped  broadcasting: set it in lib/config/socketio.dart',
+      );
+    }
     installer.writeFile('lib/providers/socketio_provider.dart', provider(app));
     installer.addEnv('SOCKETIO_ENABLED', 'true');
 

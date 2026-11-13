@@ -97,6 +97,15 @@ void main() {
     expect(snapshot(), before);
   });
 
+  test('--broadcasting with an existing config says it was skipped', () async {
+    File('${root.path}/lib/config/socketio.dart')
+      ..createSync(recursive: true)
+      ..writeAsStringSync('mine');
+    await install(<String>['--broadcasting']);
+    expect(read('lib/config/socketio.dart'), 'mine');
+    expect(exitCode, 0);
+  });
+
   test('a bad option stops with exit code 1 and writes nothing', () async {
     for (List<String> args in <List<String>>[
       <String>['--broadcasting=true'],
