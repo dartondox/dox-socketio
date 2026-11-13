@@ -523,6 +523,18 @@ class Broadcast {
     return <String, Object?>{'user_id': info['id'] ?? id, 'user_info': info};
   }
 
+  /// The id of a logged-in user: `user['id']` for a map, else the `id`
+  /// of the object. Null when it has none, like `req.auth?.id()`.
+  static Object? _userId(Object? user) {
+    if (user is Map) return user['id'];
+    try {
+      // ponytail: dynamic call, a user model may have any class
+      return (user as dynamic).id;
+    } on NoSuchMethodError {
+      return null;
+    }
+  }
+
   static void _onConnection(Socket socket) {
     socket.on('subscribe', _onSubscribe);
     socket.on('unsubscribe', _onUnsubscribe);
@@ -599,7 +611,9 @@ class Broadcast {
     }
     if (socket.user != null) {
       Object? result = await authorize(socket.user, channel);
-      if (result is Map) return _member(result, socket.id);
+      if (result is Map) {
+        return _member(result, _userId(socket.user) ?? socket.id);
+      }
       if (result != null) return result;
     }
     if (token is! String) return null;

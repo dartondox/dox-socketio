@@ -156,6 +156,11 @@ Map<String, Object?>? chatMember(Object? user, String room) {
   return <String, Object?>{'id': u['id'], 'name': u['name']};
 }
 
+Map<String, Object?> noIdMember(Object? user, String room) {
+  Map<String, Object?> u = user! as Map<String, Object?>;
+  return <String, Object?>{'name': u['name']};
+}
+
 bool teamUser(Object? user, String team, String member) {
   seenParams.addAll(<String>[team, member]);
   return true;
@@ -237,6 +242,7 @@ void main() {
   setUp(() {
     Broadcast.channel('orders.{id}', ownsOrder);
     Broadcast.channel('chat.{room}', chatMember);
+    Broadcast.channel('noid.{room}', noIdMember);
     Broadcast.channel('teams.{team}.users.{user}', teamUser);
     Broadcast.channel('broken', throwingRule);
     Broadcast.channel('slow.{id}', gatedRule);
@@ -368,6 +374,24 @@ void main() {
       ]);
       expect(await subscribe(alice, 'presence-chat.closed'), refused);
     });
+
+    test(
+      'presence member with no id gets the user id, not the socket id',
+      () async {
+        sio.Socket alice = await client('alice');
+        Future<Object?> here = next(alice, 'presence:subscribed');
+        expect(await subscribe(alice, 'presence-noid.1'), ok);
+        expect(await here, <Object?>[
+          'presence-noid.1',
+          <Object?>[
+            <String, Object?>{
+              'user_id': 1,
+              'user_info': <String, Object?>{'name': 'Alice'},
+            },
+          ],
+        ]);
+      },
+    );
 
     test('a second listen on one namespace adds no handler', () async {
       Broadcast.listen(SocketIoProvider.server!.sockets);
