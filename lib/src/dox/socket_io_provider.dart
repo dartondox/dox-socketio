@@ -51,6 +51,9 @@ class SocketIoProvider extends DoxProvider {
       if (config.whisper) Broadcast.whisper = true;
     }
     server = io;
+    // Print the origin warning only in the web server. The queue worker
+    // and the scheduler run setup() too, but never accept sockets.
+    if (Dox().isWebServer) io.engine.warnIfOpenOrigin();
     Route.mount(config.options.path, io.handle);
     if (Dox().isolateId == 1 &&
         isolates > 1 &&

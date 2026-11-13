@@ -131,6 +131,10 @@ class SocketIoServer implements EngineConnectionListener {
   }
 
   /// Handles one HTTP request. Mount it on a native or a `dart:io` server.
+  ///
+  /// This does not warn about an open Origin check. When you mount it by
+  /// hand, set [ServerOptions.allowedOrigins], or call
+  /// `engine.warnIfOpenOrigin()` once at startup.
   Future<void> handle(HttpRequest request) async {
     try {
       await engine.handle(request);
@@ -151,6 +155,7 @@ class SocketIoServer implements EngineConnectionListener {
   /// Handles the Socket.IO requests of [server]. Other requests get 404.
   void attach(HttpServer server) {
     _httpServer = server;
+    engine.warnIfOpenOrigin();
     server.listen(_onHttpRequest);
   }
 
