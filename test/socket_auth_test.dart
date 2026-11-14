@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -6,6 +7,13 @@ import 'package:dox_core/dox_core.dart';
 import 'package:dox_socketio/dox_socketio.dart';
 import 'package:dox_socketio/src/engine/origin_check.dart';
 import 'package:test/test.dart';
+
+/// A new key for each run. A fixed key in a public repo is a public key,
+/// and dox_core refuses public sample keys outside development and tests.
+final String _testKey = List<String>.generate(
+  32,
+  (int i) => Random.secure().nextInt(36).toRadixString(36),
+).join();
 
 /// Checks SocketAuth and the handshake token and cookie helpers.
 void main() {
@@ -121,7 +129,7 @@ void main() {
   });
 
   test('the web login session logs the socket in', () async {
-    String key = '4HyiSrq4N5Nfg6bOadIhbFEI8zbUkpxt';
+    String key = _testKey;
     Dox().config = AppConfig(appKey: key);
     String sealed(int at) => AESEncryptor.encode(
       jsonEncode(<String, dynamic>{
@@ -170,7 +178,7 @@ void main() {
   });
 
   group('handshake.cookie', () {
-    String key = '4HyiSrq4N5Nfg6bOadIhbFEI8zbUkpxt';
+    String key = _testKey;
     String oldKey = 'oldKeyoldKeyoldKeyoldKeyoldKey12';
 
     setUp(() {
@@ -232,7 +240,7 @@ void main() {
   });
 
   group('handshake.session', () {
-    String key = '4HyiSrq4N5Nfg6bOadIhbFEI8zbUkpxt';
+    String key = _testKey;
     const SessionConfig cacheSession = SessionConfig(
       driver: 'cache',
       store: 'memory',

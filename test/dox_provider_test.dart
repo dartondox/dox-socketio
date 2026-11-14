@@ -1,6 +1,7 @@
 @Timeout(Duration(seconds: 90))
 library;
 
+import 'dart:math';
 import 'dart:io';
 
 import 'package:dox_core/dox_core.dart';
@@ -10,6 +11,13 @@ import 'package:test/test.dart';
 
 import 'support/node_runner.dart';
 import 'support/test_app.dart';
+
+/// A new key for each run. A fixed key in a public repo is a public key,
+/// and dox_core refuses public sample keys outside development and tests.
+final String _testKey = List<String>.generate(
+  32,
+  (int i) => Random.secure().nextInt(36).toRadixString(36),
+).join();
 
 String get baseUrl => 'http://127.0.0.1:${Dox().server.httpServer.port}';
 
@@ -26,7 +34,7 @@ class PingRouter extends Router {
 List<String> events = <String>[];
 
 AppConfig config = AppConfig(
-  appKey: '4HyiSrq4N5Nfg6bOadIhbFEI8zbUkpxt',
+  appKey: _testKey,
   // the OS picks a free port, so test files can run in parallel
   serverPort: 0,
   // Not all interfaces. On macOS another program may take the same port on
