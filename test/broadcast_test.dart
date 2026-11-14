@@ -1,6 +1,7 @@
 @Timeout(Duration(seconds: 60))
 library;
 
+import 'dart:math';
 import 'dart:async';
 import 'dart:convert';
 
@@ -21,6 +22,13 @@ import 'redis_adapter_test.dart'
         redisOptions,
         redisSkipReason,
         settle;
+
+/// A new key for each run. A fixed key in a public repo is a public key,
+/// and dox_core refuses public sample keys outside development and tests.
+final String _testKey = List<String>.generate(
+  32,
+  (int i) => Random.secure().nextInt(36).toRadixString(36),
+).join();
 
 Map<String, Map<String, Object?>> users = <String, Map<String, Object?>>{
   'alice': <String, Object?>{'id': 1, 'name': 'Alice'},
@@ -277,7 +285,7 @@ void main() {
   setUpAll(() async {
     Dox().initialize(
       AppConfig(
-        appKey: '4HyiSrq4N5Nfg6bOadIhbFEI8zbUkpxt',
+        appKey: _testKey,
         serverPort: 0,
         // Not all interfaces. On macOS another program may take the same
         // port on 127.0.0.1 and get our connections. The test then gets 404.
