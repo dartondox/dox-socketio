@@ -216,20 +216,16 @@ class RoomStore {
       for (String room in except) ?_rooms[room],
     ];
     if (skip.isEmpty) return candidates;
-    return _without(candidates, skip);
-  }
-
-  static Iterable<String> _without(
-    Iterable<String> ids,
-    List<Set<String>> skip,
-  ) sync* {
-    next:
-    for (String id in ids) {
-      for (Set<String> members in skip) {
-        if (members.contains(id)) continue next;
-      }
-      yield id;
+    if (skip.length == 1) {
+      Set<String> one = skip.first;
+      return candidates.where((String id) => !one.contains(id));
     }
+    return candidates.where((String id) {
+      for (Set<String> members in skip) {
+        if (members.contains(id)) return false;
+      }
+      return true;
+    });
   }
 
   static Set<String> _newSet() => <String>{};
