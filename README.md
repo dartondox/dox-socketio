@@ -368,6 +368,7 @@ List<Object?> done = await io.serverSideEmitWithAck('reload');
 ```
 
 - `fetchSockets()` gives a `Socket` for sockets of this server and a `RemoteSocket` for the others. A `RemoteSocket` has `id`, `handshake`, `rooms` and `data` (copies) and `emit`, `join`, `leave` and `disconnect`, which go through Redis.
+- For presence, `PubSubAdapter.fetchSocketsData` asks the other servers for less. Other Dox servers send only the socket id and `data[key]`.
 - `socketsJoin`, `socketsLeave` and `disconnectSockets` complete when this server is done and the request is sent. They do not wait for the other servers.
 - `fetchSockets` and `serverSideEmitWithAck` wait for an answer from each server, for at most `requestsTimeout` (default 5 seconds, like Node.js). When a server does not answer in time, they throw, like Node.js: `fetchSockets` throws a `TimeoutException`, and `serverSideEmitWithAck` throws an `AckTimeoutException` whose `responses` holds the answers that came.
 - `emitWithAck` on a broadcast throws an `AckTimeoutException` when not all clients answer in time. Its `responses` holds the acks that came.

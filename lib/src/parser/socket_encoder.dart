@@ -35,14 +35,7 @@ class SocketEncoder {
         ..write(',');
     }
     if (packet.id != null) out.write(packet.id);
-    if (data != null) {
-      // Write the JSON straight into [out], with no extra string copy.
-      const JsonEncoder().startChunkedConversion(
-          StringConversionSink.fromStringSink(out),
-        )
-        ..add(data)
-        ..close();
-    }
+    if (data != null) out.write(jsonEncode(data));
     return <Object>[out.toString(), ...attachments];
   }
 

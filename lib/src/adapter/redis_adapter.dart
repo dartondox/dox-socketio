@@ -35,8 +35,13 @@ class RedisAdapter extends PubSubAdapter {
   /// Connection used to subscribe. Do not use it for other commands.
   final Redis subscriber;
 
+  /// The namespace of each broadcast pattern. A channel can match the
+  /// patterns of two namespaces, and Redis sends it once per pattern.
+  final Map<String, Namespace> _byPattern = <String, Namespace>{};
+
   @override
   Future<void> subscribe(Namespace nsp) async {
+    _byPattern[_broadcastPattern(nsp)] = nsp;
     RedisSubscriber broadcasts = await subscriber.psubscribe(
       _broadcastPattern(nsp),
     );
@@ -48,6 +53,7 @@ class RedisAdapter extends PubSubAdapter {
   /// It does not close the Redis connections; they are yours.
   @override
   Future<void> unsubscribe(Namespace nsp) async {
+    _byPattern.remove(_broadcastPattern(nsp));
     await subscriber.punsubscribe(_broadcastPattern(nsp));
     await subscriber.unsubscribe(_channels(nsp));
   }
@@ -70,8 +76,11 @@ class RedisAdapter extends PubSubAdapter {
   }
 
   /// Handles a message from Redis: a broadcast, a request or a response.
-  void onRedisMessage(String? pattern, String channel, Uint8List message) =>
-      onMessage(channel, message);
+  void onRedisMessage(String? pattern, String channel, Uint8List message) {
+    Namespace? nsp = _byPattern[pattern];
+    if (nsp == null) return onMessage(channel, message);
+    onBroadcastMessage(nsp, channel, message);
+  }
 
   String _broadcastPattern(Namespace nsp) => '${_escapeGlob(channelOf(nsp))}*';
 

@@ -437,12 +437,12 @@ abstract class PubSubAdapter extends InMemoryAdapter {
   void onMessage(String channel, Uint8List message) {
     try {
       for (Namespace nsp in _namespaces.values) {
-        String broadcastChannel = channelOf(nsp);
-        if (channel.startsWith(broadcastChannel)) {
-          if (_hasTarget(nsp, broadcastChannel, channel)) {
-            _onBroadcast(nsp, RedisFormat.decode(message));
-          }
-          return;
+        // No return here. The channel of `/a#b` starts with the channel of
+        // `/a`, and a room channel looks the same as a namespace channel.
+        // So more than one namespace can match. Each one checks the
+        // namespace in the packet and drops what is not its own.
+        if (channel.startsWith(channelOf(nsp))) {
+          onBroadcastMessage(nsp, channel, message);
         }
         if (channel == requestChannelOf(nsp)) {
           _onRequest(nsp, RedisFormat.decode(message));
@@ -455,6 +455,14 @@ abstract class PubSubAdapter extends InMemoryAdapter {
       }
     } catch (error) {
       stderr.writeln('[socketio] bad adapter message: $error');
+    }
+  }
+
+  /// Handles a broadcast [message] that came on [channel] for [nsp].
+  /// It is dropped when the packet is for another namespace.
+  void onBroadcastMessage(Namespace nsp, String channel, Uint8List message) {
+    if (_hasTarget(nsp, channelOf(nsp), channel)) {
+      _onBroadcast(nsp, RedisFormat.decode(message));
     }
   }
 

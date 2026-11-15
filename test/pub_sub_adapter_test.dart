@@ -46,6 +46,37 @@ class _LinkedAdapter extends PubSubAdapter {
   }
 }
 
+/// A namespace at [path] where each socket joins the room `r`.
+class _RoomNamespace extends NamespaceHandler {
+  _RoomNamespace(this.path);
+
+  @override
+  final String path;
+
+  @override
+  void onConnection(Socket socket) => socket.join('r');
+}
+
+/// Connects to the namespace [nsp]. A `#` in a URL starts a fragment, so
+/// the name is not put in the URL.
+Future<sio.Socket> _connectTo(String url, String nsp) async {
+  sio.Socket base = sio.io(
+    url,
+    sio.OptionBuilder()
+        .setTransports(<String>['websocket'])
+        .disableReconnection()
+        .enableForceNew()
+        .disableAutoConnect()
+        .build(),
+  );
+  sio.Socket socket = base.io.socket(nsp, <String, Object?>{});
+  Completer<void> connected = Completer<void>();
+  socket.onConnect((dynamic _) => connected.complete());
+  socket.connect();
+  await connected.future.timeout(Duration(seconds: 5));
+  return socket;
+}
+
 /// Keeps what is written to stderr.
 class _Stderr implements Stdout {
   final List<String> lines = <String>[];
@@ -162,6 +193,28 @@ void main() {
       await serverA.io.to('room1').socketsJoin('room9');
       await settle();
       expect(await serverA.io.to('room9').fetchSockets(), hasLength(1));
+    });
+  });
+
+  group('namespace names that start the same', () {
+    test('/a#b gets its broadcasts, and /a does not', () async {
+      for (TestApp app in <TestApp>[serverA, serverB]) {
+        app.io.register(_RoomNamespace('/a'));
+        app.io.register(_RoomNamespace('/a#b'));
+      }
+      await adapterA.ready();
+      await adapterB.ready();
+      sio.Socket inA = await _connectTo(serverB.url, '/a');
+      sio.Socket inAB = await _connectTo(serverB.url, '/a#b');
+      clients.addAll(<sio.Socket>[inA, inAB]);
+      List<Object?> gotA = collect(inA, 'n');
+      List<Object?> gotAB = collect(inAB, 'n');
+      await serverA.io.of('/a#b').to('r').emit('n', 'ab');
+      await serverA.io.of('/a').to('r').emit('n', 'a');
+      await serverA.io.of('/a#b').emit('n', 'ab-all');
+      await settle();
+      expect(gotAB, <Object?>['ab', 'ab-all']);
+      expect(gotA, <Object?>['a']);
     });
   });
 

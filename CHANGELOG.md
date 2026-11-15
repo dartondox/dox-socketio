@@ -15,8 +15,9 @@
 - Speed: with the Redis or isolate adapter, every server decoded every broadcast, also for rooms it does not have. Now a one-room broadcast is not decoded when this server has no socket in that room. A broadcast to the whole namespace is not decoded when this server has no socket in it.
 - Speed: a broadcast with the Redis or isolate adapter sent to the local sockets only after the publish to Redis was done. Now the local sockets get it at once. The emit future still completes after the publish, a failed publish is still logged, and messages keep their order.
 - Speed: a presence join or leave asked every other server for the whole socket of each member (all headers, cookies, auth). Now Dox servers send only the socket id and the presence data. A Node.js server still sends the whole socket, which works too. New: `PubSubAdapter.fetchSocketsData(nsp, options, dataKey)`.
+- Fix: with the Redis or isolate adapter, a namespace like `/a#b` did not get broadcasts from other servers when a namespace `/a` also existed. They went to `/a` and were dropped. Now each matching namespace checks the packet, and only the right one handles it.
 - Memory: a socket makes its ack maps and its `data` map only when they are first used.
-- Speed: fewer string copies when a packet is encoded or decoded, and one socket id needs 4 random calls instead of 15.
+- Speed: fewer string copies when a packet is decoded, and one socket id needs 4 random calls instead of 15.
 
 - Change: every log and warning line now starts with `[socketio]` (was `dox_socketio:`). Only the prefix changed.
 
