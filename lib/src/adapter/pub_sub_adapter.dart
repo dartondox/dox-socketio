@@ -392,7 +392,7 @@ abstract class PubSubAdapter extends InMemoryAdapter {
     try {
       await publish(channel, message);
     } catch (error) {
-      stderr.writeln('dox_socketio: publish failed: $error');
+      stderr.writeln('[socketio] publish failed: $error');
     }
   }
 
@@ -415,7 +415,7 @@ abstract class PubSubAdapter extends InMemoryAdapter {
         }
       }
     } catch (error) {
-      stderr.writeln('dox_socketio: bad adapter message: $error');
+      stderr.writeln('[socketio] bad adapter message: $error');
     }
   }
 
@@ -685,7 +685,7 @@ abstract class PubSubAdapter extends InMemoryAdapter {
         await unsubscribe(nsp);
       }
     } catch (error) {
-      stderr.writeln('dox_socketio: unsubscribe failed: $error');
+      stderr.writeln('[socketio] unsubscribe failed: $error');
     }
     await super.close();
   }

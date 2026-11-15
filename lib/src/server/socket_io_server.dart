@@ -139,7 +139,7 @@ class SocketIoServer implements EngineConnectionListener {
     try {
       await engine.handle(request);
     } catch (error) {
-      stderr.writeln('dox_socketio: request error: $error');
+      stderr.writeln('[socketio] request error: $error');
       _responder.send(request.response, HttpStatus.internalServerError, '');
     }
   }
