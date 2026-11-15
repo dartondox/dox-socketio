@@ -461,8 +461,14 @@ abstract class PubSubAdapter extends InMemoryAdapter {
   /// Handles a broadcast [message] that came on [channel] for [nsp].
   /// It is dropped when the packet is for another namespace.
   void onBroadcastMessage(Namespace nsp, String channel, Uint8List message) {
-    if (_hasTarget(nsp, channelOf(nsp), channel)) {
-      _onBroadcast(nsp, RedisFormat.decode(message));
+    // The Redis adapter calls this directly, so a bad message is caught
+    // here too.
+    try {
+      if (_hasTarget(nsp, channelOf(nsp), channel)) {
+        _onBroadcast(nsp, RedisFormat.decode(message));
+      }
+    } catch (error) {
+      stderr.writeln('[socketio] bad adapter message: $error');
     }
   }
 
