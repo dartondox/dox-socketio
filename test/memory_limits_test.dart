@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dox_socketio/dox_socketio.dart';
+import 'package:dox_socketio/src/engine/engine_socket.dart'
+    show EngineSocketListener;
 import 'package:test/test.dart';
 
 /// An adapter whose server count fails, like a Redis adapter with Redis
@@ -12,6 +14,34 @@ class _BrokenCountAdapter extends InMemoryAdapter {
   @override
   Future<int> serverCount(Namespace nsp) =>
       Future<int>.error(StateError('redis is down'));
+}
+
+class _Listener implements EngineConnectionListener {
+  _Listener(this.onConnection);
+
+  final void Function(EngineSocket) onConnection;
+
+  @override
+  void onEngineConnection(EngineSocket socket) => onConnection(socket);
+}
+
+/// Throws for the message `boom`.
+class _ThrowingListener implements EngineSocketListener {
+  _ThrowingListener(this.messages);
+
+  final List<String> messages;
+
+  @override
+  void onEngineMessage(Object data) {
+    messages.add('$data');
+    if (data == 'boom') throw StateError('boom');
+  }
+
+  @override
+  void onEnginePing() {}
+
+  @override
+  void onEngineClose(String reason) {}
 }
 
 /// Checks of the memory limits: binary parts, auth size, polling payloads,
@@ -134,6 +164,57 @@ void main() {
       expect(reasons, <String>[CloseReason.parseError]);
     });
 
+    test('the stale counter resets when a new binary packet starts', () async {
+      await start(
+        ServerOptions(
+          pingInterval: Duration(milliseconds: 200),
+          pingTimeout: Duration(seconds: 5),
+        ),
+      );
+      var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
+      ws.add('40');
+      await frames.moveNext();
+      const String header =
+          '452-["up",{"_placeholder":true,"num":0},'
+          '{"_placeholder":true,"num":1}]';
+      ws.add(header);
+      ws.add(Uint8List(10));
+      // One ping passes while the packet is not complete.
+      await Future<void>.delayed(Duration(milliseconds: 250));
+      ws.add(Uint8List(10)); // the packet is complete now
+      // A new packet starts. One ping passes: this is its first, not its
+      // second.
+      ws.add(header);
+      ws.add(Uint8List(10));
+      Stopwatch watch = Stopwatch()..start();
+      // Left unfinished, it is dropped at its second ping, about 400 ms
+      // later. Without the reset it would be dropped at the first one.
+      expect(await closedWithin(frames, Duration(seconds: 2)), isTrue);
+      expect(watch.elapsed, greaterThan(Duration(milliseconds: 250)));
+    });
+
+    test('a binary event right after CONNECT to a namespace works', () async {
+      await start(ServerOptions());
+      List<Object?> got = <Object?>[];
+      io!
+          .of('/chat')
+          .on(
+            'connection',
+            (Socket s) => s.on('up', (SocketEvent e) {
+              got.add(e.data);
+            }),
+          );
+      var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
+      ws.add('40/chat,');
+      await frames.moveNext();
+      ws.add('451-/chat,["up",{"_placeholder":true,"num":0}]');
+      ws.add(Uint8List.fromList(<int>[4, 5]));
+      await Future<void>.delayed(Duration(milliseconds: 100));
+      expect(got, hasLength(1));
+      expect(got.single, <int>[4, 5]);
+      await ws.close();
+    });
+
     test('maxAttachmentBytes closes the client', () async {
       expect(const ServerOptions().maxAttachmentBytes, isNull);
       await start(ServerOptions(maxAttachmentBytes: 150));
@@ -220,6 +301,36 @@ void main() {
     });
   });
 
+  group('packet errors', () {
+    test('a failing packet does not drop the rest of the payload', () async {
+      List<String> messages = <String>[];
+      EngineServer engine = EngineServer(
+        options: ServerOptions(),
+        connectionListener: _Listener((EngineSocket socket) {
+          socket.listener = _ThrowingListener(messages);
+        }),
+      );
+      HttpServer server = await HttpServer.bind('127.0.0.1', 0);
+      server.listen(engine.handle);
+      Uri url(String extra) => Uri.parse(
+        'http://127.0.0.1:${server.port}/socket.io/?EIO=4&transport=polling'
+        '$extra',
+      );
+      (int, String) open = await send('GET', url(''));
+      String sid =
+          (jsonDecode(open.$2.substring(1)) as Map<String, dynamic>)['sid']
+              as String;
+      (int, String) res = await send(
+        'POST',
+        url('&sid=$sid'),
+        '4a\x1e4boom\x1e4c',
+      );
+      expect(res, (200, 'ok'));
+      expect(messages, <String>['a', 'boom', 'c']);
+      await server.close(force: true);
+    });
+  });
+
   group('maxWriteBufferSize', () {
     test('a polling client that stops polling is closed', () async {
       expect(const ServerOptions().maxWriteBufferSize, isNull);
@@ -268,6 +379,38 @@ void main() {
       // An unhandled error would fail this test.
       await expectLater(awaited, throwsStateError);
       await Future<void>.delayed(Duration(milliseconds: 50));
+    });
+
+    test('a remote broadcast ack with no timeout is dropped', () async {
+      IsolateAdapter adapter = IsolateAdapter(
+        requestsTimeout: Duration(milliseconds: 100),
+      );
+      await start(ServerOptions(), adapter: adapter);
+      var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
+      ws.add('40');
+      await frames.moveNext();
+      await Future<void>.delayed(Duration(milliseconds: 50));
+      Socket socket = connected.single;
+      // A request from another server, with no timeout in its options.
+      adapter.onMessage(
+        '${adapter.key}-request#/#',
+        RedisFormat.json.encode(<String, Object?>{
+          'uid': 'other-server',
+          'requestId': 'r1',
+          'type': RedisRequestType.broadcast,
+          'packet': <String, Object?>{
+            'type': 2,
+            'nsp': '/',
+            'data': <Object?>['ask'],
+          },
+          'opts': <String, Object?>{'rooms': <String>[], 'except': <String>[]},
+        }),
+      );
+      await Future<void>.delayed(Duration(milliseconds: 30));
+      expect(socket.waitingAcks, 1);
+      await Future<void>.delayed(Duration(milliseconds: 150));
+      expect(socket.waitingAcks, 0);
+      await ws.close();
     });
 
     test('a failed server count drops the waiting broadcast acks', () async {

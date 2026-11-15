@@ -96,7 +96,13 @@ class PollingTransport extends Transport {
         _badPayload(request);
         return;
       }
-      listener?.onTransportPacket(this, packet);
+      try {
+        listener?.onTransportPacket(this, packet);
+      } catch (error, stack) {
+        // One failing packet must not drop the rest of the payload. The POST
+        // still gets its answer. Report the error, like a handler error.
+        stderr.writeln('[socketio] packet error: $error\n$stack');
+      }
       if (end < 0) break;
       start = end + 1;
     }
