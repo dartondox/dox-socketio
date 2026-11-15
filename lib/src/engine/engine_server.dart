@@ -197,7 +197,7 @@ class EngineServer implements EngineSessionStore {
     try {
       return await allow(info ?? EngineRequest.fromHttpRequest(request));
     } catch (error, stack) {
-      stderr.writeln('dox_socketio: allowRequest error: $error\n$stack');
+      stderr.writeln('[socketio] allowRequest error: $error\n$stack');
       return false;
     }
   }

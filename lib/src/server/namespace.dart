@@ -247,7 +247,7 @@ class Namespace {
       // Only a SocketIoException goes to the client. Other errors can hold
       // private text, like SQL or host names, so they are only logged.
       if (error is! SocketIoException) {
-        stderr.writeln('dox_socketio: middleware error: $error\n$stack');
+        stderr.writeln('[socketio] middleware error: $error\n$stack');
       }
       client.sendPacket(
         SocketPacket(

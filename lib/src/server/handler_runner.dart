@@ -10,7 +10,7 @@ class HandlerRunner {
     try {
       await handler(argument);
     } catch (error, stack) {
-      stderr.writeln('dox_socketio: handler error: $error\n$stack');
+      stderr.writeln('[socketio] handler error: $error\n$stack');
     }
   }
 }

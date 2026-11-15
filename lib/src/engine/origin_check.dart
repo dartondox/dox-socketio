@@ -52,7 +52,7 @@ void warnSessionOpenOriginOnce() {
   if (sessionOriginWarningDone) return;
   sessionOriginWarningDone = true;
   stderr.writeln(
-    'dox_socketio: warning: handshake.session() is used, but '
+    '[socketio] warning: handshake.session() is used, but '
     'ServerOptions(allowedOrigins:) is not set or has "*". Any website can open a '
     'socket as a logged in user. Set allowedOrigins to your own sites.',
   );
@@ -64,7 +64,7 @@ void warnOpenOriginOnce() {
   if (originWarningDone) return;
   originWarningDone = true;
   stderr.writeln(
-    'dox_socketio: warning: Socket.IO does not check the Origin header. '
+    '[socketio] warning: Socket.IO does not check the Origin header. '
     'Any website can open a socket with the cookie of a logged in user. '
     'To allow only your own sites, set ServerOptions(allowedOrigins: '
     "['https://app.example.com']). [] allows the same host only.",

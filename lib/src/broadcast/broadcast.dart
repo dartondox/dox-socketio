@@ -342,7 +342,7 @@ class Broadcast {
         if (presence) return result is Map ? result : null;
         return result == true ? true : null;
       } catch (error, stack) {
-        stderr.writeln('dox_socketio: channel rule error: $error\n$stack');
+        stderr.writeln('[socketio] channel rule error: $error\n$stack');
         return null;
       }
     }
@@ -437,7 +437,7 @@ class Broadcast {
         nsp.sockets.isEmpty) {
       _deliverWarned = true;
       stderr.writeln(
-        'dox_socketio: Broadcast.deliver sent through an in-memory adapter '
+        '[socketio] Broadcast.deliver sent through an in-memory adapter '
         'with no sockets in this process. A queue worker in its own process '
         'can not reach the clients this way: use the Redis adapter '
         '(SocketIoConfig(adapter: ...)) or set Broadcast.emitter.',
@@ -736,7 +736,7 @@ class Broadcast {
           );
         }
       } catch (error) {
-        stderr.writeln('dox_socketio: presence join of $channel: $error');
+        stderr.writeln('[socketio] presence join of $channel: $error');
         socket.leave(roomOf(channel));
         _presence(socket).remove(channel);
         return 'presence is not available';
@@ -766,7 +766,7 @@ class Broadcast {
         last = !members.any(_sameUser(member['user_id']));
       } catch (error) {
         // best effort: the others still learn that this socket left
-        stderr.writeln('dox_socketio: presence members of $channel: $error');
+        stderr.writeln('[socketio] presence members of $channel: $error');
       }
       // the last socket of this user left: tell the others
       if (last) {
@@ -776,7 +776,7 @@ class Broadcast {
             <Object?>[channel, member],
           );
         } catch (error) {
-          stderr.writeln('dox_socketio: presence leave of $channel: $error');
+          stderr.writeln('[socketio] presence leave of $channel: $error');
         }
       }
     } finally {
