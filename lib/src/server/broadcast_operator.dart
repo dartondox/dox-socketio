@@ -189,9 +189,7 @@ class _BroadcastAck {
   }
 
   void _onTimeout() {
-    for (Socket socket in _nsp.sockets.values) {
-      socket.dropAck(_packet.id!);
-    }
+    _dropAcks();
     if (_done.isCompleted) return;
     _done.completeError(
       AckTimeoutException(
@@ -204,6 +202,15 @@ class _BroadcastAck {
   void _fail(Object error) {
     if (_done.isCompleted) return;
     _timer.cancel();
+    // The timer will not drop the waiting acks now. Do it here, or each
+    // matching socket keeps one until it disconnects.
+    _dropAcks();
     _done.completeError(error);
+  }
+
+  void _dropAcks() {
+    for (Socket socket in _nsp.sockets.values) {
+      socket.dropAck(_packet.id!);
+    }
   }
 }

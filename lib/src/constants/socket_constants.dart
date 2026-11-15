@@ -33,5 +33,9 @@ const String disconnectingEvent = 'disconnecting';
 /// Message sent when a client asks for a namespace that does not exist.
 const String invalidNamespaceMessage = 'Invalid namespace';
 
+/// Message sent when the `auth` payload of CONNECT is bigger than
+/// `ServerOptions.maxAuthSize`.
+const String authTooLargeMessage = 'auth payload too large';
+
 /// Default prefix of the Redis channels. Same as @socket.io/redis-adapter.
 const String defaultRedisKey = 'socket.io';

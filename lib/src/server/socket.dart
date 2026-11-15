@@ -111,6 +111,10 @@ class Socket implements RemoteSocket {
   /// True while the socket is connected.
   bool get connected => _connected;
 
+  /// Number of acks this socket still waits for (its own `emitWithAck`
+  /// and broadcasts with an ack). Useful in tests and metrics.
+  int get waitingAcks => _acks.length + _broadcastAcks.length;
+
   /// Name of the transport now in use (`polling` or `websocket`).
   String get transport => client.conn.transport.name;
 
@@ -156,7 +160,12 @@ class Socket implements RemoteSocket {
 
   /// Sends [event] and waits for the client ack. Returns the ack arguments.
   ///
-  /// Throws [TimeoutException] when [timeout] passes first.
+  /// Throws [TimeoutException] when [timeout] passes first. With no
+  /// [timeout], `ServerOptions.ackTimeout` is used. Throws a [StateError]
+  /// when the socket disconnects first.
+  ///
+  /// When you do not wait for the future, its error is not reported as
+  /// an unhandled error, so it can not stop the isolate.
   Future<List<Object?>> emitWithAck(
     String event,
     Object? data, {
@@ -174,11 +183,14 @@ class Socket implements RemoteSocket {
         data: <Object?>[event, ?data],
       ),
     );
-    if (timeout == null) return completer.future;
-    return completer.future.timeout(
-      timeout,
-      onTimeout: _AckTimeout(this, id).call,
-    );
+    Duration? wait = timeout ?? client.server.options.ackTimeout;
+    Future<List<Object?>> result = wait == null
+        ? completer.future
+        : completer.future.timeout(wait, onTimeout: _AckTimeout(this, id).call);
+    // A disconnect or a timeout fails the future. Code that does not wait
+    // for it would else get an unhandled error. Awaiting still throws.
+    result.ignore();
+    return result;
   }
 
   /// Joins [room].

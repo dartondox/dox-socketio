@@ -565,15 +565,14 @@ abstract class PubSubAdapter extends InMemoryAdapter {
       super.broadcastWithAck(nsp, packet, options, onClientCount, onAck),
     );
     // The sender stops waiting after its timeout. Do the same, so the
-    // waiting acks do not stay in memory.
-    Duration? timeout = options.timeout;
-    if (timeout != null) {
-      Timer(timeout, () {
-        for (Socket socket in nsp.sockets.values) {
-          socket.dropAck(packet.id!);
-        }
-      });
-    }
+    // waiting acks do not stay in memory. With no timeout, the sender is a
+    // Node.js server that already gave up (its timer of `undefined` fires
+    // at once), so [requestsTimeout] is long enough.
+    Timer(options.timeout ?? requestsTimeout, () {
+      for (Socket socket in nsp.sockets.values) {
+        socket.dropAck(packet.id!);
+      }
+    });
   }
 
   void _onResponse(Object? decoded) {

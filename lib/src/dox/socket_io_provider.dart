@@ -33,6 +33,7 @@ class SocketIoProvider extends DoxProvider {
     if (Dox().isolateId != 1) {
       originWarningDone = true;
       sessionOriginWarningDone = true;
+      sessionLimitWarningDone = true;
     }
     int isolates = Dox().isolateCount;
     // Many isolates: share broadcasts between them, like one server.
@@ -53,7 +54,10 @@ class SocketIoProvider extends DoxProvider {
     server = io;
     // Print the origin warning only in the web server. The queue worker
     // and the scheduler run setup() too, but never accept sockets.
-    if (Dox().isWebServer) io.engine.warnIfOpenOrigin();
+    if (Dox().isWebServer) {
+      io.engine.warnIfOpenOrigin();
+      io.engine.warnIfNoSessionLimit();
+    }
     Route.mount(config.options.path, io.handle);
     if (Dox().isolateId == 1 &&
         isolates > 1 &&

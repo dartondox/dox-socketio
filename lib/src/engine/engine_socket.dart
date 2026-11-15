@@ -14,6 +14,10 @@ abstract class EngineSocketListener {
   /// A message came in. [data] is a [String] or a binary list.
   void onEngineMessage(Object data);
 
+  /// The server sent a ping. Use it for checks that need a clock, with no
+  /// timer of their own.
+  void onEnginePing();
+
   /// The session is closed.
   void onEngineClose(String reason);
 }
@@ -53,6 +57,10 @@ class EngineSocket implements TransportListener {
   WebsocketTransport? _probe;
   _ReadyState _state = _ReadyState.opening;
   final List<EnginePacket> _writeBuffer = <EnginePacket>[];
+
+  /// Size of [_writeBuffer]. Counted only with
+  /// [ServerOptions.maxWriteBufferSize].
+  int _writeBufferSize = 0;
   bool _closeAfterFlush = false;
   String _closeReason = CloseReason.forcedClose;
 
@@ -219,6 +227,7 @@ class EngineSocket implements TransportListener {
     _sendPacket(const EnginePacket(EnginePacketType.ping));
     _pingTimeoutTimer?.cancel();
     _pingTimeoutTimer = Timer(_options.pingTimeout, _onPingTimeout);
+    listener?.onEnginePing();
   }
 
   void _onPingTimeout() => _onClose(CloseReason.pingTimeout);
@@ -226,7 +235,28 @@ class EngineSocket implements TransportListener {
   void _sendPacket(EnginePacket packet) {
     if (_state == _ReadyState.closing || _state == _ReadyState.closed) return;
     _writeBuffer.add(packet);
+    int? maxSize = _options.maxWriteBufferSize;
+    if (maxSize != null && !_transport.writable) {
+      _writeBufferSize += _sizeOf(packet.data);
+      if (_writeBufferSize > maxSize) {
+        // Close later: this can run inside a broadcast loop over the
+        // sockets, and closing removes the socket from its rooms.
+        _state = _ReadyState.closing;
+        _writeBuffer.clear();
+        scheduleMicrotask(_onWriteBufferFull);
+        return;
+      }
+    }
     _flush();
+  }
+
+  void _onWriteBufferFull() => _onClose(CloseReason.transportError);
+
+  static int _sizeOf(Object? data) {
+    if (data is String) return data.length;
+    if (data is SharedText) return data.text.length;
+    if (data is List<int>) return data.length;
+    return 0;
   }
 
   void _flush() {
@@ -234,6 +264,7 @@ class EngineSocket implements TransportListener {
     if (!_transport.writable) return;
     List<EnginePacket> packets = List<EnginePacket>.of(_writeBuffer);
     _writeBuffer.clear();
+    _writeBufferSize = 0;
     _transport.send(packets);
     if (_closeAfterFlush) _onClose(_closeReason);
   }

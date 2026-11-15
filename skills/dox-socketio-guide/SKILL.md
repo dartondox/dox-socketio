@@ -196,6 +196,8 @@ SocketIoConfig(
 
 Other options: `path` (`/socket.io/`), `pingInterval` (25 s), `pingTimeout` (20 s), `connectTimeout` (45 s), `maxHttpBufferSize` (1,000,000 bytes), `maxAttachments` (10).
 
+Memory limits, all null (off) by default: `maxAttachmentBytes` (all binary parts of one packet), `maxAuthSize` (the CONNECT `auth` payload, bigger gets `connect_error`), `maxWriteBufferSize` (bytes kept for a client that does not read; above it the session closes), `ackTimeout` (default timeout of `socket.emitWithAck`).
+
 ### 8. Broadcasting (public, private, presence channels)
 
 Turn it on with `SocketIoConfig(broadcasting: true, ...)`. It listens on the default `/` namespace only (`io.sockets`). The `subscribe` and `unsubscribe` events work there, not on `/chat` or any other namespace you add. The client must connect to `/`, like `io(url)`, for channels. Add channel rules in every isolate, for example in a `DoxProvider.setup()`:
@@ -335,7 +337,7 @@ The payload is JSON: `{channels, event, data, except}`. `except` is the `toOther
 - `socket.user` stays on its own server. `fetchSockets()` on other servers does not return it.
 - `fetchSockets` throws a `TimeoutException`, and `serverSideEmitWithAck` or a broadcast `emitWithAck` throws an `AckTimeoutException` (with `responses`), when a server or client does not answer in time. Default `requestsTimeout` is 5 seconds.
 - A namespace added with `io.of('/x')` in only one isolate makes `fetchSockets` wait and throw. Put namespaces in the config so every isolate adds them.
-- `maxSessions` counts per isolate. With 4 isolates the app allows 4 times the value.
+- `maxSessions` counts per isolate. With 4 isolates the app allows 4 times the value. It is null by default, and the server warns at start: set it in production, because each GET makes a session that lives about 45 seconds.
 - Broadcasting runs on one namespace only: `/` with `SocketIoConfig(broadcasting: true)`. `Broadcast.listen(nsp)` on a plain server picks another one, and `Broadcast.event` sends through the last one listened. A `subscribe` on a namespace that is not listened gets no answer.
 - A queued broadcast (`ShouldBroadcastQueued`) runs `Broadcast.deliver` in the queue worker. With the in-memory or isolate adapter the clients of the web server do not get it. Use the Redis adapter.
 - Whisper is off by default. With it off, a `client event` gets no answer. Do not name a server event `client-...`.

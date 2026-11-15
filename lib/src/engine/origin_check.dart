@@ -70,3 +70,17 @@ void warnOpenOriginOnce() {
     "['https://app.example.com']). [] allows the same host only.",
   );
 }
+
+/// True after the no-session-limit warning was written in this isolate.
+bool sessionLimitWarningDone = false;
+
+/// Writes once that `ServerOptions.maxSessions` is not set.
+void warnNoSessionLimitOnce() {
+  if (sessionLimitWarningDone) return;
+  sessionLimitWarningDone = true;
+  stderr.writeln(
+    '[socketio] warning: ServerOptions(maxSessions:) is not set. Each GET '
+    'request makes a session that stays about 45 seconds, so many requests '
+    'can fill the memory. Set maxSessions in production.',
+  );
+}

@@ -72,13 +72,33 @@ class PollingTransport extends Transport {
       listener?.onTransportClose(this, CloseReason.transportError);
       return;
     }
-    List<EnginePacket> packets;
+    String payload;
     try {
-      packets = _parser.decodePayload(utf8.decode(body));
+      payload = utf8.decode(body);
     } on FormatException {
-      _responder.error(request.response, EngineError.badRequest);
-      listener?.onTransportClose(this, CloseReason.parseError);
+      _badPayload(request);
       return;
+    }
+    // Decode one packet at a time. Splitting first makes one string per
+    // separator: a 1 MB body of separators is about 500,000 strings.
+    // ponytail: no limit on the number of packets. Clients send their whole
+    // write buffer in one POST (only its bytes are capped), so a limit could
+    // refuse a busy client. An empty packet stops the loop at once.
+    int start = 0;
+    while (!_closed) {
+      int end = payload.indexOf(pollingSeparator, start);
+      EnginePacket packet;
+      try {
+        packet = _parser.decodeText(
+          payload.substring(start, end < 0 ? payload.length : end),
+        );
+      } on FormatException {
+        _badPayload(request);
+        return;
+      }
+      listener?.onTransportPacket(this, packet);
+      if (end < 0) break;
+      start = end + 1;
     }
     _responder.send(
       request.response,
@@ -86,10 +106,11 @@ class PollingTransport extends Transport {
       'ok',
       contentType: 'text/html',
     );
-    for (EnginePacket packet in packets) {
-      if (_closed) break;
-      listener?.onTransportPacket(this, packet);
-    }
+  }
+
+  void _badPayload(HttpRequest request) {
+    _responder.error(request.response, EngineError.badRequest);
+    listener?.onTransportClose(this, CloseReason.parseError);
   }
 
   /// Reads the body. Returns null when it is bigger than the limit.

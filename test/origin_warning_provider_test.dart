@@ -9,6 +9,7 @@ import 'package:test/test.dart';
 List<String> _setup({required bool webServer}) {
   List<String> lines = <String>[];
   originWarningDone = false;
+  sessionLimitWarningDone = false;
   Dox().isWebServer = webServer;
   Dox().isolateId = 1;
   IOOverrides.runZoned(() {
@@ -20,24 +21,28 @@ List<String> _setup({required bool webServer}) {
 void main() {
   tearDown(() => Dox().isWebServer = false);
 
-  test('setup in the web server prints the warning once', () {
+  test('setup in the web server prints the warnings once', () {
     List<String> lines = _setup(webServer: true);
-    expect(lines, hasLength(1));
-    expect(lines.single, contains('Any website can open a socket'));
+    expect(lines, hasLength(2));
+    expect(lines.first, contains('Any website can open a socket'));
+    expect(lines.last, contains('ServerOptions(maxSessions:) is not set'));
   });
 
   test('setup in a queue or schedule process prints nothing', () {
     expect(_setup(webServer: false), isEmpty);
   });
 
-  test('setup in the web server prints nothing with allowedOrigins', () {
+  test('setup in the web server prints nothing with allowedOrigins and maxSessions', () {
     List<String> lines = <String>[];
     originWarningDone = false;
+    sessionLimitWarningDone = false;
     Dox().isWebServer = true;
     Dox().isolateId = 1;
     IOOverrides.runZoned(() {
       SocketIoProvider(
-        SocketIoConfig(options: ServerOptions(allowedOrigins: <String>[])),
+        SocketIoConfig(
+          options: ServerOptions(allowedOrigins: <String>[], maxSessions: 100),
+        ),
       ).setup();
     }, stderr: () => _LineSink(lines));
     expect(lines, isEmpty);

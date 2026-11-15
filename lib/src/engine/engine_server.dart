@@ -60,6 +60,12 @@ class EngineServer implements EngineSessionStore {
     if (options.allowedOrigins == null) warnOpenOriginOnce();
   }
 
+  /// Writes a warning once, when no `maxSessions` is set. It runs at the
+  /// same time as [warnIfOpenOrigin].
+  void warnIfNoSessionLimit() {
+    if (options.maxSessions == null) warnNoSessionLimitOnce();
+  }
+
   /// Handles one HTTP request for the Engine.IO path.
   Future<void> handle(HttpRequest request) async {
     HttpResponse response = request.response;
