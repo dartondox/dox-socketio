@@ -25,11 +25,24 @@ class SocketEncoder {
     StringBuffer out = StringBuffer()..write(type.index);
     if (type == SocketPacketType.binaryEvent ||
         type == SocketPacketType.binaryAck) {
-      out.write('${attachments.length}-');
+      out
+        ..write(attachments.length)
+        ..write('-');
     }
-    if (packet.nsp != defaultNamespace) out.write('${packet.nsp},');
+    if (packet.nsp != defaultNamespace) {
+      out
+        ..write(packet.nsp)
+        ..write(',');
+    }
     if (packet.id != null) out.write(packet.id);
-    if (data != null) out.write(jsonEncode(data));
+    if (data != null) {
+      // Write the JSON straight into [out], with no extra string copy.
+      const JsonEncoder().startChunkedConversion(
+          StringConversionSink.fromStringSink(out),
+        )
+        ..add(data)
+        ..close();
+    }
     return <Object>[out.toString(), ...attachments];
   }
 

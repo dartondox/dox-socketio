@@ -39,6 +39,11 @@ class InMemoryAdapter implements Adapter {
   /// Names of all rooms of [nsp] on this server.
   Set<String> rooms(Namespace nsp) => _store(nsp).rooms;
 
+  /// True when a socket of [nsp] on this server is in [room]. With no
+  /// [room], true when [nsp] has any socket on this server.
+  bool hasSockets(Namespace nsp, [String? room]) =>
+      _store(nsp).hasSockets(room);
+
   @override
   Set<String> socketIds(Namespace nsp, BroadcastOptions options) =>
       _store(nsp).match(options.rooms, options.except);
@@ -183,24 +188,48 @@ class RoomStore {
 
   Set<String> socketRooms(String id) => Set<String>.of(_sids[id] ?? _empty);
 
+  /// True when a socket of this server is in [room]. With no [room], true
+  /// when this namespace has any socket on this server.
+  bool hasSockets([String? room]) =>
+      room == null ? _sids.isNotEmpty : _rooms.containsKey(room);
+
   /// Sockets in any of [rooms] (all when empty), minus those in [except].
-  Set<String> match(Set<String> rooms, Set<String> except) {
-    Set<String> skip = <String>{for (String room in except) ...?_rooms[room]};
-    Iterable<String> candidates = rooms.isEmpty
-        ? _sids.keys
-        : <String>{for (String room in rooms) ...?_rooms[room]};
-    return candidates.toSet().difference(skip);
+  /// It is a new set.
+  Set<String> match(Set<String> rooms, Set<String> except) =>
+      members(rooms, except).toSet();
+
+  /// Like [match], but it makes at most one copy: only for many [rooms],
+  /// to drop sockets that are in more than one of them. The [except]
+  /// rooms are checked one socket at a time. The result is live: do not
+  /// join or leave while you go over it.
+  Iterable<String> members(Set<String> rooms, Set<String> except) {
+    Iterable<String> candidates;
+    if (rooms.isEmpty) {
+      candidates = _sids.keys;
+    } else if (rooms.length == 1) {
+      candidates = _rooms[rooms.first] ?? _empty;
+    } else {
+      candidates = <String>{for (String room in rooms) ...?_rooms[room]};
+    }
+    if (except.isEmpty) return candidates;
+    List<Set<String>> skip = <Set<String>>[
+      for (String room in except) ?_rooms[room],
+    ];
+    if (skip.isEmpty) return candidates;
+    return _without(candidates, skip);
   }
 
-  /// Like [match], but with no copy when [except] is empty and there is at
-  /// most one room. The result is live: do not join or leave while you
-  /// go over it.
-  Iterable<String> members(Set<String> rooms, Set<String> except) {
-    if (except.isEmpty) {
-      if (rooms.isEmpty) return _sids.keys;
-      if (rooms.length == 1) return _rooms[rooms.first] ?? _empty;
+  static Iterable<String> _without(
+    Iterable<String> ids,
+    List<Set<String>> skip,
+  ) sync* {
+    next:
+    for (String id in ids) {
+      for (Set<String> members in skip) {
+        if (members.contains(id)) continue next;
+      }
+      yield id;
     }
-    return match(rooms, except);
   }
 
   static Set<String> _newSet() => <String>{};

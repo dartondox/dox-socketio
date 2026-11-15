@@ -191,15 +191,18 @@ abstract class PubSubAdapter extends InMemoryAdapter {
     SocketPacket packet,
     BroadcastOptions options,
   ) async {
-    if (!options.local) {
-      String channel = channelOf(nsp);
-      if (options.rooms.length == 1) channel += '${options.rooms.first}#';
-      await _publish(
-        channel,
-        format.encode(<Object>[uid, packet.toJson(), options.toJson()]),
-      );
-    }
+    if (options.local) return super.broadcast(nsp, packet, options);
+    String channel = channelOf(nsp);
+    if (options.rooms.length == 1) channel += '${options.rooms.first}#';
+    // Start the publish, then send to the local sockets at once. The
+    // local sockets do not wait for Redis. Publishes still go out in the
+    // order of the calls.
+    Future<void> published = _publish(
+      channel,
+      format.encode(<Object>[uid, packet.toJson(), options.toJson()]),
+    );
     await super.broadcast(nsp, packet, options);
+    await published;
   }
 
   @override
@@ -210,28 +213,40 @@ abstract class PubSubAdapter extends InMemoryAdapter {
     void Function(int clientCount) onClientCount,
     void Function(Object? response) onAck,
   ) async {
-    if (!options.local) {
-      String requestId = _ids.next();
-      // The other servers wait for acks with their own packet ids.
-      Map<String, Object?> raw = packet.toJson()..remove('id');
-      _ackRequests[requestId] = _AckRequest(onClientCount, onAck);
-      // There is no way to know when all acks came, so forget the request
-      // after the timeout, like Node.js.
-      Timer(options.timeout ?? requestsTimeout, () {
-        _ackRequests.remove(requestId);
-      });
-      await _publish(
-        requestChannelOf(nsp),
-        format.encode(<String, Object?>{
-          'uid': uid,
-          'requestId': requestId,
-          'type': RedisRequestType.broadcast,
-          'packet': raw,
-          'opts': options.toJson(),
-        }),
-      );
-    }
+    Future<void> published = options.local
+        ? Future<void>.value()
+        : _publishWithAck(nsp, packet, options, onClientCount, onAck);
+    // Like [broadcast]: the local sockets do not wait for the publish.
     await super.broadcastWithAck(nsp, packet, options, onClientCount, onAck);
+    await published;
+  }
+
+  Future<void> _publishWithAck(
+    Namespace nsp,
+    SocketPacket packet,
+    BroadcastOptions options,
+    void Function(int clientCount) onClientCount,
+    void Function(Object? response) onAck,
+  ) {
+    String requestId = _ids.next();
+    // The other servers wait for acks with their own packet ids.
+    Map<String, Object?> raw = packet.toJson()..remove('id');
+    _ackRequests[requestId] = _AckRequest(onClientCount, onAck);
+    // There is no way to know when all acks came, so forget the request
+    // after the timeout, like Node.js.
+    Timer(options.timeout ?? requestsTimeout, () {
+      _ackRequests.remove(requestId);
+    });
+    return _publish(
+      requestChannelOf(nsp),
+      format.encode(<String, Object?>{
+        'uid': uid,
+        'requestId': requestId,
+        'type': RedisRequestType.broadcast,
+        'packet': raw,
+        'opts': options.toJson(),
+      }),
+    );
   }
 
   /// Number of servers that listen on [nsp], this one included.
@@ -242,6 +257,23 @@ abstract class PubSubAdapter extends InMemoryAdapter {
   Future<List<RemoteSocket>> fetchSockets(
     Namespace nsp,
     BroadcastOptions options,
+  ) => _fetchSockets(nsp, options, null);
+
+  /// Like [fetchSockets], but a socket of another server comes with only
+  /// its id and `data[dataKey]`. Its handshake and rooms are empty. Use it
+  /// when you only need that data: the other servers send much less.
+  ///
+  /// A Node.js server does not know this and sends the whole socket.
+  Future<List<RemoteSocket>> fetchSocketsData(
+    Namespace nsp,
+    BroadcastOptions options,
+    String dataKey,
+  ) => _fetchSockets(nsp, options, dataKey);
+
+  Future<List<RemoteSocket>> _fetchSockets(
+    Namespace nsp,
+    BroadcastOptions options,
+    String? dataKey,
   ) async {
     List<RemoteSocket> sockets = <RemoteSocket>[...localSockets(nsp, options)];
     if (options.local) return sockets;
@@ -251,7 +283,11 @@ abstract class PubSubAdapter extends InMemoryAdapter {
       nsp,
       RedisRequestType.remoteFetch,
       numSub,
-      <String, Object?>{'opts': _opts(options)},
+      <String, Object?>{
+        'opts': _opts(options),
+        // Not in Node.js. Node.js servers skip it.
+        _dataKeyField: ?dataKey,
+      },
       'timeout reached while waiting for fetchSockets response',
     );
     for (Object? socket in remote) {
@@ -401,8 +437,11 @@ abstract class PubSubAdapter extends InMemoryAdapter {
   void onMessage(String channel, Uint8List message) {
     try {
       for (Namespace nsp in _namespaces.values) {
-        if (channel.startsWith(channelOf(nsp))) {
-          _onBroadcast(nsp, RedisFormat.decode(message));
+        String broadcastChannel = channelOf(nsp);
+        if (channel.startsWith(broadcastChannel)) {
+          if (_hasTarget(nsp, broadcastChannel, channel)) {
+            _onBroadcast(nsp, RedisFormat.decode(message));
+          }
           return;
         }
         if (channel == requestChannelOf(nsp)) {
@@ -417,6 +456,16 @@ abstract class PubSubAdapter extends InMemoryAdapter {
     } catch (error) {
       stderr.writeln('[socketio] bad adapter message: $error');
     }
+  }
+
+  /// False when no socket of this server can get a broadcast on [channel],
+  /// so it is not decoded. A one-room broadcast has its room in the
+  /// channel: `<base><room>#`. Any other broadcast is on [base]; it may
+  /// reach any socket of [nsp].
+  bool _hasTarget(Namespace nsp, String base, String channel) {
+    if (channel.length == base.length) return hasSockets(nsp);
+    if (!channel.endsWith('#')) return true;
+    return hasSockets(nsp, channel.substring(base.length, channel.length - 1));
   }
 
   void _onBroadcast(Namespace nsp, Object? decoded) {
@@ -476,9 +525,15 @@ abstract class PubSubAdapter extends InMemoryAdapter {
           'rooms': rooms(nsp).toList(),
         });
       case RedisRequestType.remoteFetch:
+        Object? dataKey = request[_dataKeyField];
+        List<Socket> sockets = localSockets(nsp, options);
         _respond(nsp, request, <String, Object?>{
           'requestId': request['requestId'],
-          'sockets': localSockets(nsp, options).map(_socketJson).toList(),
+          'sockets': dataKey is String
+              ? <Map<String, Object?>>[
+                  for (Socket socket in sockets) _socketData(socket, dataKey),
+                ]
+              : sockets.map(_socketJson).toList(),
         });
       case RedisRequestType.serverSideEmit:
         _onServerSideEmit(nsp, request);
@@ -628,6 +683,17 @@ abstract class PubSubAdapter extends InMemoryAdapter {
   }
 
   static String _toString(Object? value) => value.toString();
+
+  /// A socket for [fetchSocketsData]: only its id and `data[dataKey]`.
+  static Map<String, Object?> _socketData(Socket socket, String dataKey) {
+    return <String, Object?>{
+      'id': socket.id,
+      'data': <String, Object?>{dataKey: socket.data[dataKey]},
+    };
+  }
+
+  /// Request field of [fetchSocketsData]. Only Dox servers read it.
+  static const String _dataKeyField = 'doxDataKey';
 
   /// Same shape as a socket in the Node.js `fetchSockets` answer.
   static Map<String, Object?> _socketJson(Socket socket) {

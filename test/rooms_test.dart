@@ -50,6 +50,42 @@ void main() {
       }
     });
 
+    test('except with many rooms, unknown rooms and the socket id', () {
+      store.addAll('d', <String>{'d', 'room1', 'room2'});
+      expect(
+        store
+            .members(<String>{'room1', 'room2'}, <String>{'vip', 'c'})
+            .toList(),
+        unorderedEquals(<String>['b', 'd']),
+      );
+      expect(
+        store.members(<String>{'room1'}, <String>{'none'}).toSet(),
+        <String>{'a', 'b', 'd'},
+      );
+      expect(
+        store.members(<String>{}, <String>{'a', 'room2'}).toSet(),
+        <String>{'b'},
+      );
+    });
+
+    test('members with except makes no copy of the room', () {
+      Iterable<String> ids = store.members(<String>{'room1'}, <String>{'vip'});
+      expect(ids, isNot(isA<Set<String>>()));
+      expect(ids.toList(), <String>['b']);
+    });
+
+    test('hasSockets', () {
+      expect(store.hasSockets(), isTrue);
+      expect(store.hasSockets('room1'), isTrue);
+      expect(store.hasSockets('none'), isFalse);
+      store
+        ..delAll('a')
+        ..delAll('b')
+        ..delAll('c');
+      expect(store.hasSockets(), isFalse);
+      expect(store.hasSockets('room1'), isFalse);
+    });
+
     test('unknown rooms match nobody', () {
       expect(store.match(<String>{'none'}, <String>{}), isEmpty);
     });

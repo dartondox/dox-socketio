@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart' show Hmac, sha256;
 import 'package:dox_core/dox_core.dart';
 
+import '../adapter/adapter.dart';
 import '../adapter/in_memory_adapter.dart';
 import '../adapter/pub_sub_adapter.dart';
 import '../adapter/socket_io_emitter.dart';
@@ -803,10 +804,17 @@ class Broadcast {
     Socket socket,
     String channel,
   ) async {
-    List<RemoteSocket> sockets = await socket.nsp
-        .to(roomOf(channel))
-        .fetchSockets()
-        .timeout(presenceTimeout);
+    Namespace nsp = socket.nsp;
+    Adapter adapter = nsp.adapter;
+    // Other servers send only the presence data, not the whole socket.
+    Future<List<RemoteSocket>> fetch = adapter is PubSubAdapter
+        ? adapter.fetchSocketsData(
+            nsp,
+            BroadcastOptions(rooms: <String>{roomOf(channel)}),
+            presenceKey,
+          )
+        : nsp.to(roomOf(channel)).fetchSockets();
+    List<RemoteSocket> sockets = await fetch.timeout(presenceTimeout);
     List<Map<dynamic, dynamic>> members = <Map<dynamic, dynamic>>[];
     for (RemoteSocket one in sockets) {
       Object? presence = one.data[presenceKey];

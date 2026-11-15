@@ -89,7 +89,8 @@ class Socket implements RemoteSocket {
   /// Free storage for your own data, like the logged-in user.
   /// `fetchSockets()` on other servers gets a copy of it, so keep it JSON.
   @override
-  final Map<String, Object?> data = <String, Object?>{};
+  Map<String, Object?> get data => _data ??= <String, Object?>{};
+  Map<String, Object?>? _data;
 
   /// The logged-in user, set by [SocketAuth]. Null when no one logged in.
   /// It stays on this server: `fetchSockets()` on other servers does not
@@ -102,10 +103,9 @@ class Socket implements RemoteSocket {
   final HandlerRunner _runner;
   final Map<String, List<EventHandler>> _handlers =
       <String, List<EventHandler>>{};
-  final Map<int, Completer<List<Object?>>> _acks =
-      <int, Completer<List<Object?>>>{};
-  final Map<int, void Function(List<Object?> args)> _broadcastAcks =
-      <int, void Function(List<Object?> args)>{};
+  // Made on first use: most sockets never wait for an ack.
+  Map<int, Completer<List<Object?>>>? _acks;
+  Map<int, void Function(List<Object?> args)>? _broadcastAcks;
   bool _connected = false;
 
   /// True while the socket is connected.
@@ -113,7 +113,7 @@ class Socket implements RemoteSocket {
 
   /// Number of acks this socket still waits for (its own `emitWithAck`
   /// and broadcasts with an ack). Useful in tests and metrics.
-  int get waitingAcks => _acks.length + _broadcastAcks.length;
+  int get waitingAcks => (_acks?.length ?? 0) + (_broadcastAcks?.length ?? 0);
 
   /// Name of the transport now in use (`polling` or `websocket`).
   String get transport => client.conn.transport.name;
@@ -174,7 +174,7 @@ class Socket implements RemoteSocket {
     _checkEventName(event);
     int id = nsp.nextAckId();
     Completer<List<Object?>> completer = Completer<List<Object?>>();
-    _acks[id] = completer;
+    (_acks ??= <int, Completer<List<Object?>>>{})[id] = completer;
     sendPacket(
       SocketPacket(
         type: SocketPacketType.event,
@@ -269,24 +269,27 @@ class Socket implements RemoteSocket {
     _adapter.delAll(nsp, id);
     nsp.remove(this);
     client.remove(this);
-    for (Completer<List<Object?>> completer in _acks.values) {
-      completer.completeError(StateError('socket disconnected: $reason'));
+    Map<int, Completer<List<Object?>>>? acks = _acks;
+    _acks = null;
+    _broadcastAcks = null;
+    if (acks != null) {
+      for (Completer<List<Object?>> completer in acks.values) {
+        completer.completeError(StateError('socket disconnected: $reason'));
+      }
     }
-    _acks.clear();
-    _broadcastAcks.clear();
     _emitLocal(disconnectEvent, reason);
   }
 
   /// Calls [onAck] with the ack arguments when the client answers packet
   /// [id]. Used for broadcasts with an ack.
   void waitForAck(int id, void Function(List<Object?> args) onAck) {
-    _broadcastAcks[id] = onAck;
+    (_broadcastAcks ??= <int, void Function(List<Object?> args)>{})[id] = onAck;
   }
 
   /// Removes a waiting ack after a timeout.
   void dropAck(int id) {
-    _acks.remove(id);
-    _broadcastAcks.remove(id);
+    _acks?.remove(id);
+    _broadcastAcks?.remove(id);
   }
 
   void _onEvent(SocketPacket packet) {
@@ -308,8 +311,8 @@ class Socket implements RemoteSocket {
   void _onAck(SocketPacket packet) {
     Object? data = packet.data;
     List<Object?> args = data is List ? data.cast<Object?>() : <Object?>[];
-    _acks.remove(packet.id)?.complete(args);
-    _broadcastAcks.remove(packet.id)?.call(args);
+    _acks?.remove(packet.id)?.complete(args);
+    _broadcastAcks?.remove(packet.id)?.call(args);
   }
 
   void _emitLocal(String name, String reason) {

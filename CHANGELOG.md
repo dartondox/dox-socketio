@@ -11,6 +11,12 @@
 - Fix: a broadcast `emitWithAck` kept one waiting ack per socket when the server count failed (Redis down), until the socket left. They are now dropped.
 - Fix: a broadcast with an ack from another server with no timeout kept its waiting acks for ever. They are now dropped after `requestsTimeout`. That sender (Node.js) has already given up by then.
 - New: `socket.waitingAcks`, the number of acks a socket still waits for.
+- Speed: a room broadcast with `except` (like `socket.to(room).emit(...)`) copied the room members 3 times on each emit. Now it makes no copy for one room, and one copy for many rooms.
+- Speed: with the Redis or isolate adapter, every server decoded every broadcast, also for rooms it does not have. Now a one-room broadcast is not decoded when this server has no socket in that room. A broadcast to the whole namespace is not decoded when this server has no socket in it.
+- Speed: a broadcast with the Redis or isolate adapter sent to the local sockets only after the publish to Redis was done. Now the local sockets get it at once. The emit future still completes after the publish, a failed publish is still logged, and messages keep their order.
+- Speed: a presence join or leave asked every other server for the whole socket of each member (all headers, cookies, auth). Now Dox servers send only the socket id and the presence data. A Node.js server still sends the whole socket, which works too. New: `PubSubAdapter.fetchSocketsData(nsp, options, dataKey)`.
+- Memory: a socket makes its ack maps and its `data` map only when they are first used.
+- Speed: fewer string copies when a packet is encoded or decoded, and one socket id needs 4 random calls instead of 15.
 
 - Change: every log and warning line now starts with `[socketio]` (was `dox_socketio:`). Only the prefix changed.
 
