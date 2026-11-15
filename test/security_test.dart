@@ -163,6 +163,7 @@ void main() {
     test('making a server prints nothing (queue and schedule)', () {
       List<String> lines = <String>[];
       originWarningDone = false;
+      sessionLimitWarningDone = false;
       IOOverrides.runZoned(() {
         SocketIoServer(options: ServerOptions());
         SocketIoServer(options: ServerOptions(cors: CorsOptions()));
@@ -187,11 +188,30 @@ void main() {
             await io.close();
           }
         }, stderr: () => _LineSink(lines));
+        lines.removeWhere(_isSessionLimitWarning);
         expect(lines, hasLength(1));
         expect(lines.single, contains('Any website can open a socket'));
         expect(lines.single, contains('ServerOptions(allowedOrigins:'));
       },
     );
+  });
+
+  test('serving with no maxSessions logs one warning', () async {
+    List<String> lines = <String>[];
+    sessionLimitWarningDone = false;
+    await IOOverrides.runZoned(() async {
+      for (ServerOptions options in <ServerOptions>[
+        ServerOptions(allowedOrigins: <String>[], maxSessions: 10),
+        ServerOptions(allowedOrigins: <String>[]),
+        ServerOptions(allowedOrigins: <String>[]),
+      ]) {
+        SocketIoServer io = SocketIoServer(options: options);
+        await io.listen(0);
+        await io.close();
+      }
+    }, stderr: () => _LineSink(lines));
+    expect(lines, hasLength(1));
+    expect(lines.single, contains('ServerOptions(maxSessions:) is not set'));
   });
 
   group('allowedOrigins null, cors list (like 3.0.0)', () {
@@ -325,6 +345,8 @@ void main() {
     expect(closed, isTrue);
   });
 }
+
+bool _isSessionLimitWarning(String line) => line.contains('maxSessions');
 
 /// Collects the lines written to a fake stderr.
 class _LineSink implements Stdout {

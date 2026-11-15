@@ -14,17 +14,39 @@ class SocketDecoder {
   ///
   /// [maxDepth] is the deepest nesting of lists and maps in a binary
   /// packet. Deeper data is refused, so it can not overflow the stack.
+  ///
+  /// [maxAttachmentBytes] is the most bytes of all binary parts of one
+  /// packet. Null means no limit.
   SocketDecoder({
     this.maxAttachments = defaultMaxAttachments,
     this.maxDepth = 32,
+    this.maxAttachmentBytes,
   });
 
   final int maxAttachments;
   final int maxDepth;
+  final int? maxAttachmentBytes;
 
   SocketPacket? _pending;
   int _expected = 0;
+  int _pendingBytes = 0;
+  bool _pendingAtLastCheck = false;
   final List<Uint8List> _buffers = <Uint8List>[];
+
+  /// Drops a binary packet that is still not complete and was also waiting
+  /// at the last call, and returns true. Call it once per ping: a client
+  /// that stops in the middle of a packet is caught at the second ping, so
+  /// a packet has one to two ping intervals to arrive.
+  bool dropStale() {
+    if (_pending == null) return false;
+    if (!_pendingAtLastCheck) {
+      _pendingAtLastCheck = true;
+      return false;
+    }
+    _pending = null;
+    _buffers.clear();
+    return true;
+  }
 
   /// Adds one Engine.IO message ([String] or binary).
   ///
@@ -41,6 +63,13 @@ class SocketDecoder {
       if (_pending == null) {
         throw const FormatException('got binary without a packet');
       }
+      int? maxBytes = maxAttachmentBytes;
+      if (maxBytes != null) {
+        _pendingBytes += data.length;
+        if (_pendingBytes > maxBytes) {
+          throw const FormatException('attachments too big');
+        }
+      }
       _buffers.add(data is Uint8List ? data : Uint8List.fromList(data));
       return _buffers.length == _expected ? _finish() : null;
     }
@@ -51,6 +80,8 @@ class SocketDecoder {
     if (decoded.attachments == 0) return decoded.packet;
     _pending = decoded.packet;
     _expected = decoded.attachments;
+    _pendingBytes = 0;
+    _pendingAtLastCheck = false;
     return null;
   }
 

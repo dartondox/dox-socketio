@@ -58,6 +58,10 @@ class ServerOptions {
     this.allowedOrigins,
     this.allowRequest,
     this.maxSessions,
+    this.maxAttachmentBytes,
+    this.maxAuthSize,
+    this.maxWriteBufferSize,
+    this.ackTimeout,
   });
 
   /// URL path the server listens on. Must end with `/`.
@@ -129,6 +133,12 @@ class ServerOptions {
   /// Most open Engine.IO sessions on this server. Null (the default) means
   /// no limit.
   ///
+  /// Set it in production. With no limit, every GET request without a
+  /// login makes a polling session. Each one stays in memory for about
+  /// `pingInterval + pingTimeout` (45 s by default), so many requests can
+  /// fill the memory. When it is null, the server logs one warning at
+  /// start.
+  ///
   /// When the limit is reached, a new handshake gets 503 with the
   /// Engine.IO error `{"code":3,"message":"Too many sessions"}`. Requests
   /// of open sessions still work. A slot is free again when a session
@@ -138,4 +148,31 @@ class ServerOptions {
   /// server and its own count, so the whole app allows up to
   /// `maxSessions` times the number of isolates.
   final int? maxSessions;
+
+  /// Most bytes of all binary attachments of one packet. The parts are kept
+  /// in memory until the last one comes. A packet with more bytes is a
+  /// parse error and closes that client. Null (the default) means no limit
+  /// beyond [maxAttachments] times [maxHttpBufferSize].
+  final int? maxAttachmentBytes;
+
+  /// Most bytes of the `auth` payload of a CONNECT packet (as JSON, UTF-8).
+  /// The payload stays in memory for the life of the socket. A bigger one
+  /// is refused with a `connect_error` (`auth payload too large`). Null
+  /// (the default) means no limit beyond [maxHttpBufferSize].
+  final int? maxAuthSize;
+
+  /// Most bytes the server keeps for a client that can not take them now,
+  /// like a polling client that stopped polling. Text counts its length.
+  /// Above it, the session is closed. Null (the default) means no limit:
+  /// packets are kept until the ping timeout closes the session.
+  ///
+  /// The buffer also fills during a websocket upgrade and while a slow
+  /// poll is on its way. Pick a value well above what you send to one
+  /// client in a few seconds.
+  final int? maxWriteBufferSize;
+
+  /// Timeout of `socket.emitWithAck` when no timeout is passed. Then it
+  /// throws a [TimeoutException]. Null (the default) waits until the client
+  /// answers or disconnects.
+  final Duration? ackTimeout;
 }

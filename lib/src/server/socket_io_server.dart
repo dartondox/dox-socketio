@@ -134,7 +134,8 @@ class SocketIoServer implements EngineConnectionListener {
   ///
   /// This does not warn about an open Origin check. When you mount it by
   /// hand, set [ServerOptions.allowedOrigins], or call
-  /// `engine.warnIfOpenOrigin()` once at startup.
+  /// `engine.warnIfOpenOrigin()` once at startup. The same goes for
+  /// [ServerOptions.maxSessions] and `engine.warnIfNoSessionLimit()`.
   Future<void> handle(HttpRequest request) async {
     try {
       await engine.handle(request);
@@ -156,6 +157,7 @@ class SocketIoServer implements EngineConnectionListener {
   void attach(HttpServer server) {
     _httpServer = server;
     engine.warnIfOpenOrigin();
+    engine.warnIfNoSessionLimit();
     server.listen(_onHttpRequest);
   }
 

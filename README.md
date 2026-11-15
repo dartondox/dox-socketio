@@ -140,7 +140,27 @@ ServerOptions(
 - The count is per isolate. With 4 isolates, the app allows 4 times `maxSessions`.
 - Keep the hook fast. A slow hook keeps a slot busy longer.
 
-Both are null by default: all requests are allowed and there is no limit.
+Both are null by default: all requests are allowed and there is no limit. Set `maxSessions` in production. With no limit, each GET request without a login makes a session that stays about 45 seconds, so many requests can fill the memory. The server logs one warning about this when it starts.
+
+## Memory limits
+
+These limits are off (null) by default. Turn them on to cap the memory one client can hold.
+
+```dart
+ServerOptions(
+  maxAttachmentBytes: 2000000, // all binary parts of one packet
+  maxAuthSize: 65536, // the `auth` payload of CONNECT
+  maxWriteBufferSize: 10000000, // packets kept for a client that does not read
+  ackTimeout: Duration(seconds: 30), // socket.emitWithAck with no timeout
+)
+```
+
+- `maxAttachmentBytes`: a bigger binary packet closes the client.
+- `maxAuthSize`: a bigger `auth` payload gets `connect_error` with `auth payload too large`.
+- `maxWriteBufferSize`: when a client stops reading (a polling client that stops polling), the session is closed at this size. The buffer also fills during a websocket upgrade, so keep it well above what you send to one client in a few seconds.
+- `ackTimeout`: `socket.emitWithAck` without a `timeout` then throws a `TimeoutException` after this time.
+
+Always on: a binary packet before the client joined a namespace closes the client, and a binary packet that is still not complete at two pings in a row closes the client. So a binary packet must finish within about two ping intervals.
 
 ## Broadcasting
 

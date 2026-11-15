@@ -1,5 +1,17 @@
 ## Unreleased
 
+- Security: a client could send a binary packet header, then stop before the last part. The parts stayed in memory for as long as the client answered pings, even before it joined a namespace. Now a binary packet before the client joined a namespace closes the client, and a packet that is still not complete at two pings in a row is dropped and closes the client.
+- Security: new opt-in `ServerOptions.maxAttachmentBytes` caps all binary parts of one packet. Null (the default) keeps today's behavior.
+- Security: the CONNECT `auth` payload (up to `maxHttpBufferSize`) stays in memory for the life of the socket. New opt-in `ServerOptions.maxAuthSize` refuses a bigger one with `connect_error` (`auth payload too large`). Null (the default) means no limit.
+- Security: with `maxSessions` null (the default), every GET request makes a session that lives about 45 seconds. The default stays. The server now logs one warning at start, and the docs say to set it in production.
+- Security: a 1 MB polling body of separator characters was split into about 500,000 strings before the first one was read. Now packets are read one at a time, and reading stops when the session closes.
+- Security: a polling client that stopped polling kept every packet sent to it until the ping timeout. New opt-in `ServerOptions.maxWriteBufferSize` closes the session above that size. Null (the default) means no limit.
+- Fix: `socket.emitWithAck` with no timeout waited for ever when the client never answered. New opt-in `ServerOptions.ackTimeout` sets a default timeout. Null (the default) keeps today's behavior.
+- Fix: an `emitWithAck` future that the app did not wait for failed on disconnect or timeout as an unhandled error, which can stop the isolate. It is no longer reported as unhandled. `await` still throws.
+- Fix: a broadcast `emitWithAck` kept one waiting ack per socket when the server count failed (Redis down), until the socket left. They are now dropped.
+- Fix: a broadcast with an ack from another server with no timeout kept its waiting acks for ever. They are now dropped after `requestsTimeout`. That sender (Node.js) has already given up by then.
+- New: `socket.waitingAcks`, the number of acks a socket still waits for.
+
 - Change: every log and warning line now starts with `[socketio]` (was `dox_socketio:`). Only the prefix changed.
 
 ## 3.2.0

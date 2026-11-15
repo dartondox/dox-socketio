@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import '../constants/engine_constants.dart';
 import '../constants/socket_constants.dart';
@@ -13,7 +14,10 @@ import 'socket_io_server.dart';
 /// One Engine.IO connection. It can hold sockets of many namespaces.
 class Client implements EngineSocketListener {
   Client(this.server, this.conn, {this._encoder = const SocketEncoder()})
-    : _decoder = SocketDecoder(maxAttachments: server.options.maxAttachments) {
+    : _decoder = SocketDecoder(
+        maxAttachments: server.options.maxAttachments,
+        maxAttachmentBytes: server.options.maxAttachmentBytes,
+      ) {
     conn.listener = this;
     _connectTimer = Timer(server.options.connectTimeout, _onConnectTimeout);
   }
@@ -70,6 +74,13 @@ class Client implements EngineSocketListener {
 
   @override
   void onEngineMessage(Object data) {
+    // A binary packet keeps its parts in memory until the last one comes.
+    // Official clients send events only after CONNECT is answered, so
+    // refuse one before that: it can only fill memory.
+    if (_sockets.isEmpty && data is String && _isBinaryHeader(data)) {
+      conn.close(CloseReason.parseError);
+      return;
+    }
     SocketPacket? packet;
     try {
       packet = _decoder.add(data);
@@ -79,6 +90,13 @@ class Client implements EngineSocketListener {
       return;
     }
     if (packet != null) _onPacket(packet);
+  }
+
+  @override
+  void onEnginePing() {
+    // A client that stops in the middle of a binary packet would keep its
+    // parts in memory as long as it answers pings.
+    if (_decoder.dropStale()) conn.close(CloseReason.parseError);
   }
 
   @override
@@ -116,6 +134,19 @@ class Client implements EngineSocketListener {
       return;
     }
     Object? auth = packet.data;
+    int? maxAuthSize = server.options.maxAuthSize;
+    if (maxAuthSize != null &&
+        auth != null &&
+        utf8.encode(jsonEncode(auth)).length > maxAuthSize) {
+      sendPacket(
+        SocketPacket(
+          type: SocketPacketType.connectError,
+          nsp: packet.nsp,
+          data: const <String, Object>{'message': authTooLargeMessage},
+        ),
+      );
+      return;
+    }
     _connecting.add(packet.nsp);
     try {
       await nsp.add(
@@ -125,6 +156,14 @@ class Client implements EngineSocketListener {
     } finally {
       _connecting.remove(packet.nsp);
     }
+  }
+
+  /// True for the text part of a binary event or binary ack (`5` or `6`).
+  static bool _isBinaryHeader(String text) {
+    if (text.isEmpty) return false;
+    int type = text.codeUnitAt(0) - 48;
+    return type == SocketPacketType.binaryEvent.index ||
+        type == SocketPacketType.binaryAck.index;
   }
 
   void _onConnectTimeout() {
