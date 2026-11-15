@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
 /// Makes random ids for sessions and sockets.
 ///
@@ -11,9 +12,16 @@ class IdGenerator {
 
   /// Returns a new random id.
   String next() {
-    List<int> bytes = List<int>.generate(15, _randomByte);
-    return base64Url.encode(bytes);
+    // 4 calls of 32 bits each give 16 bytes. The id uses 15 of them.
+    // ponytail: Random has no "fill bytes" call, so 4 is the fewest.
+    Uint8List bytes = Uint8List(16);
+    ByteData view = ByteData.sublistView(bytes);
+    for (int i = 0; i < 16; i += 4) {
+      view.setUint32(i, _random.nextInt(_max32));
+    }
+    return base64Url.encode(Uint8List.sublistView(bytes, 0, 15));
   }
 
-  int _randomByte(int _) => _random.nextInt(256);
+  /// The biggest bound `nextInt` takes: 2^32.
+  static const int _max32 = 0x100000000;
 }

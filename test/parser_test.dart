@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:dox_socketio/dox_socketio.dart';
@@ -242,8 +243,25 @@ void main() {
       ]);
     });
 
+    test('reads the JSON after the namespace and the id', () {
+      SocketPacket packet = SocketDecoder().add('2/chat,12["é",{"a":[1]}]')!;
+      expect(packet.nsp, '/chat');
+      expect(packet.id, 12);
+      expect(packet.data, <Object?>[
+        'é',
+        <String, Object?>{
+          'a': <Object?>[1],
+        },
+      ]);
+      expect(
+        () => SocketDecoder().add('2/chat,12["a",'),
+        throwsFormatException,
+      );
+    });
+
     test('rejects bad packets', () {
       expect(() => SocketDecoder().add('9'), throwsFormatException);
+      expect(() => SocketDecoder().add('/'), throwsFormatException);
       expect(() => SocketDecoder().add('2{"a":1}'), throwsFormatException);
       expect(() => SocketDecoder().add('2["connect"]'), throwsFormatException);
       expect(() => SocketDecoder().add('2[]'), throwsFormatException);
@@ -260,4 +278,40 @@ void main() {
       expect(() => badNum.add(Uint8List(1)), throwsFormatException);
     });
   });
+
+  group('IdGenerator', () {
+    test('gives 20 url-safe characters', () {
+      IdGenerator ids = IdGenerator();
+      Set<String> seen = <String>{};
+      for (int i = 0; i < 100; i++) {
+        String id = ids.next();
+        expect(id, matches(RegExp(r'^[A-Za-z0-9_-]{20}$')));
+        seen.add(id);
+      }
+      expect(seen, hasLength(100));
+    });
+
+    test('uses 4 random calls per id', () {
+      _CountingRandom random = _CountingRandom();
+      IdGenerator(random).next();
+      expect(random.calls, 4);
+    });
+  });
+}
+
+class _CountingRandom implements Random {
+  final Random _inner = Random(1);
+  int calls = 0;
+
+  @override
+  int nextInt(int max) {
+    calls++;
+    return _inner.nextInt(max);
+  }
+
+  @override
+  bool nextBool() => _inner.nextBool();
+
+  @override
+  double nextDouble() => _inner.nextDouble();
 }

@@ -125,8 +125,8 @@ class SocketDecoder {
   /// Decodes the text part of a packet.
   _DecodedText _decodeText(String text) {
     if (text.isEmpty) throw const FormatException('empty packet');
-    int? typeIndex = int.tryParse(text[0]);
-    if (typeIndex == null || typeIndex >= SocketPacketType.values.length) {
+    int typeIndex = text.codeUnitAt(0) - 48;
+    if (typeIndex < 0 || typeIndex >= SocketPacketType.values.length) {
       throw FormatException('unknown packet type', text);
     }
     SocketPacketType type = SocketPacketType.values[typeIndex];
@@ -164,7 +164,12 @@ class SocketDecoder {
     Object? data;
     if (i < text.length) {
       try {
-        data = jsonDecode(text.substring(i));
+        // Parse from [i] on, with no copy of the text.
+        _OneValue value = _OneValue();
+        const JsonDecoder().startChunkedConversion(value)
+          ..addSlice(text, i, text.length, false)
+          ..close();
+        data = value.value;
       } on FormatException {
         throw FormatException('invalid payload', text);
       }
@@ -207,4 +212,15 @@ class _DecodedText {
 
   final SocketPacket packet;
   final int attachments;
+}
+
+/// Keeps the one value of a chunked JSON decode.
+class _OneValue implements Sink<Object?> {
+  Object? value;
+
+  @override
+  void add(Object? data) => value = data;
+
+  @override
+  void close() {}
 }
