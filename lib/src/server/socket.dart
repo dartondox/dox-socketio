@@ -107,6 +107,7 @@ class Socket implements RemoteSocket {
   Map<int, Completer<List<Object?>>>? _acks;
   Map<int, void Function(List<Object?> args)>? _broadcastAcks;
   bool _connected = false;
+  bool _closed = false;
 
   /// True while the socket is connected.
   bool get connected => _connected;
@@ -193,11 +194,12 @@ class Socket implements RemoteSocket {
     return result;
   }
 
-  /// Joins [room]. Does nothing after the socket disconnected, else the
-  /// room entry would stay in the adapter for ever.
+  /// Joins [room]. Does nothing after the socket closed, else the room
+  /// entry would stay in the adapter for ever. A middleware may join
+  /// before the socket is connected.
   @override
   void join(String room) {
-    if (!_connected) return;
+    if (_closed) return;
     _adapter.addAll(nsp, id, <String>{room});
   }
 
@@ -240,6 +242,13 @@ class Socket implements RemoteSocket {
     }
   }
 
+  /// Called by the namespace when a socket never connected (a middleware
+  /// failed or the client left). Removes the rooms it joined.
+  void abort() {
+    _closed = true;
+    _adapter.delAll(nsp, id);
+  }
+
   /// Called by the namespace when the middlewares passed.
   void onConnect() {
     _connected = true;
@@ -270,6 +279,7 @@ class Socket implements RemoteSocket {
     if (!_connected) return;
     _emitLocal(disconnectingEvent, reason);
     _connected = false;
+    _closed = true;
     _adapter.delAll(nsp, id);
     nsp.remove(this);
     client.remove(this);
