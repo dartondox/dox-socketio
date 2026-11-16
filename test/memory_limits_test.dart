@@ -428,4 +428,73 @@ void main() {
       await ws.close();
     });
   });
+
+  group('rooms', () {
+    test('join after disconnect leaves no room entry', () async {
+      await start(ServerOptions());
+      var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
+      ws.add('40');
+      await frames.moveNext();
+      await Future<void>.delayed(Duration(milliseconds: 50));
+      Socket socket = connected.single;
+      socket.join('live');
+      expect(await io!.to('live').fetchSockets(), hasLength(1));
+      socket.disconnect();
+      socket.join('late');
+      InMemoryAdapter adapter = io!.of('/').adapter as InMemoryAdapter;
+      expect(adapter.rooms(socket.nsp), isEmpty);
+      expect(adapter.socketRooms(socket.nsp, socket.id), isEmpty);
+      await ws.close();
+    });
+
+    test('join in a middleware works', () async {
+      await start(ServerOptions());
+      io!.use((Socket s) => s.join('mw'));
+      var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
+      ws.add('40');
+      await frames.moveNext();
+      expect(await io!.to('mw').fetchSockets(), hasLength(1));
+      await ws.close();
+    });
+
+    test('a middleware that joins then rejects leaves no room entry', () async {
+      await start(ServerOptions());
+      io!.use((Socket s) {
+        s.join('mw');
+        throw SocketIoException('no');
+      });
+      var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
+      ws.add('40');
+      await frames.moveNext();
+      InMemoryAdapter adapter = io!.of('/').adapter as InMemoryAdapter;
+      expect(adapter.rooms(io!.of('/')), isEmpty);
+      await ws.close();
+    });
+
+    test(
+      'a join after an await while the client leaves leaves no entry',
+      () async {
+        await start(ServerOptions());
+        Completer<void> gate = Completer<void>();
+        Socket? seen;
+        io!.use((Socket s) async {
+          seen = s;
+          await gate.future;
+          s.join('mw');
+        });
+        var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
+        ws.add('40');
+        await Future<void>.delayed(Duration(milliseconds: 50));
+        await ws.close();
+        await Future<void>.delayed(Duration(milliseconds: 100));
+        gate.complete();
+        await Future<void>.delayed(Duration(milliseconds: 100));
+        expect(seen, isNotNull);
+        expect(connected, isEmpty);
+        InMemoryAdapter adapter = io!.of('/').adapter as InMemoryAdapter;
+        expect(adapter.rooms(io!.of('/')), isEmpty);
+        expect(adapter.socketRooms(io!.of('/'), seen!.id), isEmpty);
+      },
+    );
+  });
 }

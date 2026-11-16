@@ -249,6 +249,7 @@ class Namespace {
       if (error is! SocketIoException) {
         stderr.writeln('[socketio] middleware error: $error\n$stack');
       }
+      socket.abort();
       client.sendPacket(
         SocketPacket(
           type: SocketPacketType.connectError,
@@ -260,7 +261,10 @@ class Namespace {
       );
       return;
     }
-    if (!client.isOpen) return;
+    if (!client.isOpen) {
+      socket.abort();
+      return;
+    }
     sockets[socket.id] = socket;
     client.addSocket(socket);
     socket.onConnect();
