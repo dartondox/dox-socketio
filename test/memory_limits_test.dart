@@ -428,4 +428,23 @@ void main() {
       await ws.close();
     });
   });
+
+  group('rooms', () {
+    test('join after disconnect leaves no room entry', () async {
+      await start(ServerOptions());
+      var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
+      ws.add('40');
+      await frames.moveNext();
+      await Future<void>.delayed(Duration(milliseconds: 50));
+      Socket socket = connected.single;
+      socket.join('live');
+      expect(await io!.to('live').fetchSockets(), hasLength(1));
+      socket.disconnect();
+      socket.join('late');
+      InMemoryAdapter adapter = io!.of('/').adapter as InMemoryAdapter;
+      expect(adapter.rooms(socket.nsp), isEmpty);
+      expect(adapter.socketRooms(socket.nsp, socket.id), isEmpty);
+      await ws.close();
+    });
+  });
 }

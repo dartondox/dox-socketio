@@ -193,9 +193,13 @@ class Socket implements RemoteSocket {
     return result;
   }
 
-  /// Joins [room].
+  /// Joins [room]. Does nothing after the socket disconnected, else the
+  /// room entry would stay in the adapter for ever.
   @override
-  void join(String room) => _adapter.addAll(nsp, id, <String>{room});
+  void join(String room) {
+    if (!_connected) return;
+    _adapter.addAll(nsp, id, <String>{room});
+  }
 
   /// Leaves [room].
   @override

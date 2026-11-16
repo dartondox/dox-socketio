@@ -1,5 +1,6 @@
 ## Unreleased
 
+- Fix: `socket.join()` after the socket disconnected kept the socket id in the room store for ever. It now does nothing when the socket is not connected.
 - Security: a client could send a binary packet header, then stop before the last part. The parts stayed in memory for as long as the client answered pings, even before it joined a namespace. Now a binary packet before the client joined a namespace closes the client, and a packet that is still not complete at two pings in a row is dropped and closes the client.
 - Security: new opt-in `ServerOptions.maxAttachmentBytes` caps all binary parts of one packet. Null (the default) keeps today's behavior.
 - Security: the CONNECT `auth` payload (up to `maxHttpBufferSize`) stays in memory for the life of the socket. New opt-in `ServerOptions.maxAuthSize` refuses a bigger one with `connect_error` (`auth payload too large`). Null (the default) means no limit.
