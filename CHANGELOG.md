@@ -1,4 +1,4 @@
-## Unreleased
+## 3.2.1
 
 - Fix: `socket.join()` after the socket disconnected kept the socket id in the room store for ever. It now does nothing after the socket closed. A join in a middleware still works. Rooms joined by a socket that never connects (a middleware fails, or the client leaves first) are removed.
 - Security: a client could send a binary packet header, then stop before the last part. The parts stayed in memory for as long as the client answered pings, even before it joined a namespace. Now a binary packet before the client joined a namespace closes the client, and a packet that is still not complete at two pings in a row is dropped and closes the client.
