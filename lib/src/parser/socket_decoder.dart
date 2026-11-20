@@ -20,7 +20,7 @@ class SocketDecoder {
   /// packet. Null means no limit.
   SocketDecoder({
     this.maxAttachments = defaultMaxAttachments,
-    this.maxDepth = 32,
+    this.maxDepth = defaultMaxDepth,
     this.maxAttachmentBytes,
   });
 
@@ -163,7 +163,8 @@ class SocketDecoder {
     int? id = i > idStart ? int.parse(text.substring(idStart, i)) : null;
 
     Object? data;
-    if (i < text.length) {
+    bool hasPayload = i < text.length;
+    if (hasPayload) {
       _checkDepth(text, i);
       try {
         // Parse from [i] on, with no copy of the text.
@@ -176,8 +177,8 @@ class SocketDecoder {
         throw FormatException('invalid payload', text);
       }
     }
-    // Also with no payload: only CONNECT and DISCONNECT may have no data.
-    if (!_isPayloadValid(type, data)) {
+    // Also with no payload: only CONNECT and DISCONNECT may have none.
+    if (!_isPayloadValid(type, data, hasPayload)) {
       throw FormatException('invalid payload', text);
     }
     return _DecodedText(
@@ -214,12 +215,13 @@ class SocketDecoder {
     }
   }
 
-  bool _isPayloadValid(SocketPacketType type, Object? data) {
+  /// A JSON `null` is a payload too, so `40null` and `1null` are refused.
+  bool _isPayloadValid(SocketPacketType type, Object? data, bool hasPayload) {
     switch (type) {
       case SocketPacketType.connect:
-        return data == null || data is Map;
+        return !hasPayload || data is Map;
       case SocketPacketType.disconnect:
-        return data == null;
+        return !hasPayload;
       case SocketPacketType.connectError:
         return data is String || data is Map;
       case SocketPacketType.event:

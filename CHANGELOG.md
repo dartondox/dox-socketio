@@ -1,7 +1,7 @@
 ## Unreleased
 
-- Fix: an event packet with no data (`2` or `20`) threw in the server. In Dox it logged one error per packet, and a plain `SocketIoServer().listen()` did not catch it. Now only CONNECT and DISCONNECT may have no data. Any other packet with no data is a parse error and closes that client. Same rule as the Socket.IO protocol.
-- Security: a CONNECT `auth` nested about 200,000 levels deep parsed fine, then overflowed the stack when the server encoded it again (the `maxAuthSize` check, or `fetchSockets` with the Redis adapter). Now the decoder refuses data nested deeper than 32 levels in all packets, as it did for binary packets already. The client is closed. The `maxAuthSize` check also counts auth it can not encode as too big.
+- Fix: an event packet with no data (`2` or `20`) threw in the server. In Dox it logged one error per packet, and a plain `SocketIoServer().listen()` did not catch it. Now only CONNECT and DISCONNECT may have no data. Any other packet with no data is a parse error and closes that client. A JSON `null` counts as data, so `40null` and `1null` are refused too, as in Node.js.
+- Security: a CONNECT `auth` nested about 200,000 levels deep parsed fine, then overflowed the stack when the server encoded it again (the `maxAuthSize` check, or `fetchSockets` with the Redis adapter). Now text packets are also limited to 32 levels by default, as binary packets were already. Deeper data closes the client. New `ServerOptions.maxDepth` changes the limit for both. Node.js has no limit, so an app that sends deeper JSON should raise it. The `maxAuthSize` check also counts auth it can not encode as too big.
 - Security: `Broadcast.socketId(req)` gave the `X-Socket-ID` header as it was. That value is the socket to skip, so a room name there (`broadcast:private-user.42`) made `toOthers` skip the whole room. Now it gives null when the value is not a socket id. A broadcast job also drops a bad `toOthers` value.
 
 ## 3.2.1

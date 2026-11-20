@@ -16,6 +16,7 @@ class Client implements EngineSocketListener {
   Client(this.server, this.conn, {this._encoder = const SocketEncoder()})
     : _decoder = SocketDecoder(
         maxAttachments: server.options.maxAttachments,
+        maxDepth: server.options.maxDepth,
         maxAttachmentBytes: server.options.maxAttachmentBytes,
       ) {
     conn.listener = this;
@@ -162,7 +163,9 @@ class Client implements EngineSocketListener {
   static bool _isTooBig(Object auth, int max) {
     try {
       return utf8.encode(jsonEncode(auth)).length > max;
-    } catch (_) {
+    } on StackOverflowError {
+      return true;
+    } on JsonUnsupportedObjectError {
       return true;
     }
   }

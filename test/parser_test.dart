@@ -286,6 +286,10 @@ void main() {
       }
       expect(() => SocketDecoder().add('51-'), throwsFormatException);
       expect(() => SocketDecoder().add('61-1'), throwsFormatException);
+      // A JSON null is a payload too.
+      for (String text in <String>['0null', '0/chat,null', '1null', '1{}']) {
+        expect(() => SocketDecoder().add(text), throwsFormatException);
+      }
     });
 
     test('rejects data nested deeper than maxDepth', () {
@@ -302,6 +306,39 @@ void main() {
       // Brackets inside strings do not count.
       String brackets = '[' * 100;
       expect(SocketDecoder().add('2["e","\\"$brackets"]'), isNotNull);
+      // A string that ends in an escaped backslash: the brackets after it
+      // are real and count.
+      expect(
+        () => SocketDecoder().add('2["e","\\\\",${deep(32)}]'),
+        throwsFormatException,
+      );
+      expect(SocketDecoder().add('2["e","\\\\",${deep(30)}]'), isNotNull);
+    });
+
+    test('counts maps and mixed nesting', () {
+      String maps(int n) => '${'{"a":' * n}1${'}' * n}';
+      expect(SocketDecoder().add('0${maps(32)}'), isNotNull);
+      expect(() => SocketDecoder().add('0${maps(33)}'), throwsFormatException);
+      // [{[ ... ]}]: 34 levels with the event list.
+      String mixed = '${'[{"a":' * 16}[1]${'}]' * 16}';
+      expect(() => SocketDecoder().add('2["e",$mixed]'), throwsFormatException);
+      expect(SocketDecoder(maxDepth: 34).add('2["e",$mixed]'), isNotNull);
+    });
+
+    test('skips the scan only when the payload is too short', () {
+      SocketDecoder decoder = SocketDecoder(maxDepth: 2);
+      // 4 characters (2 * maxDepth): skipped, and depth 2 is fine.
+      expect(decoder.add('31[[]]'), isNotNull);
+      // 6 characters: scanned, and depth 3 is refused.
+      expect(() => decoder.add('31[[[]]]'), throwsFormatException);
+      expect(SocketDecoder(maxDepth: 3).add('31[[[]]]'), isNotNull);
+    });
+
+    test('maxDepth can be raised', () {
+      String deep = '${'[' * 39}1${']' * 39}';
+      // 40 levels with the event list.
+      expect(() => SocketDecoder().add('2["e",$deep]'), throwsFormatException);
+      expect(SocketDecoder(maxDepth: 64).add('2["e",$deep]'), isNotNull);
     });
   });
 

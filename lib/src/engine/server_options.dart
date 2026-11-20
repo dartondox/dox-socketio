@@ -52,6 +52,7 @@ class ServerOptions {
     this.connectTimeout = defaultConnectTimeout,
     this.maxHttpBufferSize = defaultMaxHttpBufferSize,
     this.maxAttachments = defaultMaxAttachments,
+    this.maxDepth = defaultMaxDepth,
     this.transports = const <String>[transportPolling, transportWebsocket],
     this.allowUpgrades = true,
     this.cors,
@@ -88,6 +89,15 @@ class ServerOptions {
   /// Most binary attachments one Socket.IO packet may have.
   /// A packet with more is a parse error and closes that client.
   final int maxAttachments;
+
+  /// The deepest nesting of lists and maps in one packet, for text and
+  /// binary packets. Deeper data is a parse error and closes that client.
+  /// Without a limit, very deep data can overflow the stack when the
+  /// server encodes it again.
+  ///
+  /// The default is 32. Node.js Socket.IO has no limit. If your app sends
+  /// JSON nested deeper than 32 levels, raise it.
+  final int maxDepth;
 
   /// Allowed transports.
   final List<String> transports;

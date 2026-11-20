@@ -194,7 +194,7 @@ SocketIoConfig(
 );
 ```
 
-Other options: `path` (`/socket.io/`), `pingInterval` (25 s), `pingTimeout` (20 s), `connectTimeout` (45 s), `maxHttpBufferSize` (1,000,000 bytes), `maxAttachments` (10).
+Other options: `path` (`/socket.io/`), `pingInterval` (25 s), `pingTimeout` (20 s), `connectTimeout` (45 s), `maxHttpBufferSize` (1,000,000 bytes), `maxAttachments` (10), `maxDepth` (32, the deepest nesting of lists and maps in one packet; Node.js has no limit, raise it if the app sends deeper JSON).
 
 Memory limits, all null (off) by default: `maxAttachmentBytes` (all binary parts of one packet), `maxAuthSize` (the CONNECT `auth` payload, bigger gets `connect_error`), `maxWriteBufferSize` (bytes kept for a client that does not read; above it the session closes), `ackTimeout` (default timeout of `socket.emitWithAck`).
 

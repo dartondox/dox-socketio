@@ -114,6 +114,53 @@ void main() {
         as String;
   }
 
+  group('bad packets', () {
+    test('an event with no data closes only that client', () async {
+      await start(ServerOptions());
+      for (String frame in <String>['42', '420']) {
+        var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
+        ws.add('40');
+        await frames.moveNext(); // CONNECT answer
+        ws.add(frame);
+        expect(await closedWithin(frames, Duration(seconds: 2)), isTrue);
+      }
+      expect(reasons, <String>['parse error', 'parse error']);
+      var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
+      ws.add('40');
+      await frames.moveNext();
+      expect(frames.current, startsWith('40{"sid":'));
+      await ws.close();
+    });
+
+    test('maxDepth sets the deepest nesting', () async {
+      expect(const ServerOptions().maxDepth, 32);
+      String deep = '${'[' * 39}1${']' * 39}'; // 40 levels with the list
+      await start(ServerOptions());
+      var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
+      ws.add('40');
+      await frames.moveNext();
+      ws.add('42["e",$deep]');
+      expect(await closedWithin(frames, Duration(seconds: 2)), isTrue);
+      await io!.close();
+
+      await start(ServerOptions(maxDepth: 64));
+      List<Object?> got = <Object?>[];
+      io!.on(
+        'connection',
+        (Socket s) => s.on('e', (SocketEvent e) {
+          got.add(e.data);
+        }),
+      );
+      var (WebSocket ws2, StreamIterator<dynamic> frames2) = await openWs();
+      ws2.add('40');
+      await frames2.moveNext();
+      ws2.add('42["e",$deep]');
+      await Future<void>.delayed(Duration(milliseconds: 100));
+      expect(got, hasLength(1));
+      await ws2.close();
+    });
+  });
+
   group('binary packets', () {
     test('a binary packet before CONNECT closes the client', () async {
       await start(ServerOptions());

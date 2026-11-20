@@ -160,7 +160,9 @@ ServerOptions(
 - `maxWriteBufferSize`: when a client stops reading (a polling client that stops polling), the session is closed at this size. The buffer also fills during a websocket upgrade, so keep it well above what you send to one client in a few seconds.
 - `ackTimeout`: `socket.emitWithAck` without a `timeout` then throws a `TimeoutException` after this time.
 
-Always on: a binary packet before the client joined a namespace closes the client, and a binary packet that is still not complete at two pings in a row closes the client. So a binary packet must finish within about two ping intervals.
+Always on: `maxDepth` (default 32) is the deepest nesting of lists and maps in one packet. Deeper data closes the client, because encoding it again could overflow the stack. Node.js has no such limit. If your app sends JSON nested deeper than 32 levels, raise it: `ServerOptions(maxDepth: 64)`.
+
+Also always on: a binary packet before the client joined a namespace closes the client, and a binary packet that is still not complete at two pings in a row closes the client. So a binary packet must finish within about two ping intervals.
 
 ## Broadcasting
 
