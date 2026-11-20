@@ -22,7 +22,11 @@ class SocketDecoder {
     this.maxAttachments = defaultMaxAttachments,
     this.maxDepth = defaultMaxDepth,
     this.maxAttachmentBytes,
-  });
+  }) {
+    if (maxDepth < 1) {
+      throw ArgumentError.value(maxDepth, 'maxDepth', 'must be 1 or more');
+    }
+  }
 
   final int maxAttachments;
   final int maxDepth;

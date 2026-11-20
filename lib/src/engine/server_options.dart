@@ -96,7 +96,8 @@ class ServerOptions {
   /// server encodes it again.
   ///
   /// The default is 32. Node.js Socket.IO has no limit. If your app sends
-  /// JSON nested deeper than 32 levels, raise it.
+  /// JSON nested deeper than 32 levels, raise it. It must be 1 or more:
+  /// `SocketIoServer` throws an [ArgumentError] otherwise.
   final int maxDepth;
 
   /// Allowed transports.

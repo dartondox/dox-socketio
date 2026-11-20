@@ -391,6 +391,9 @@ class Broadcast {
   /// instead. With no hook, it is sent at once.
   static Future<void> event(ShouldBroadcast event, {String? toOthers}) async {
     bool queued = event is ShouldBroadcastQueued;
+    // Drop a value that is not a socket id, so the fake, the queue and the
+    // send all see the same value.
+    if (toOthers != null && !_socketId.hasMatch(toOthers)) toOthers = null;
     BroadcastFake? fake = _fake;
     if (fake != null) {
       fake.broadcasted.add(

@@ -334,6 +334,15 @@ void main() {
       expect(SocketDecoder(maxDepth: 3).add('31[[[]]]'), isNotNull);
     });
 
+    test('maxDepth below 1 is refused', () {
+      expect(() => SocketDecoder(maxDepth: 0), throwsArgumentError);
+      expect(() => SocketDecoder(maxDepth: -1), throwsArgumentError);
+      expect(
+        () => SocketIoServer(options: ServerOptions(maxDepth: 0)),
+        throwsArgumentError,
+      );
+    });
+
     test('maxDepth can be raised', () {
       String deep = '${'[' * 39}1${']' * 39}';
       // 40 levels with the event list.

@@ -317,6 +317,20 @@ void main() {
       await ws2.close();
     });
 
+    test('auth too deep to encode gets connect_error', () async {
+      // A high maxDepth lets the auth past the decoder. The size check can
+      // not encode it and counts it as too big.
+      await start(ServerOptions(maxDepth: 1000000, maxAuthSize: 1000));
+      var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
+      ws.add('40{"a":${'[' * 200000}${']' * 200000}}');
+      await frames.moveNext();
+      expect(frames.current, '44{"message":"auth payload too large"}');
+      ws.add('40{"token":"a"}');
+      await frames.moveNext();
+      expect(frames.current, startsWith('40{"sid":'));
+      await ws.close();
+    });
+
     test('no limit by default', () async {
       await start(ServerOptions());
       var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();

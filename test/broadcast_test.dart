@@ -985,13 +985,19 @@ void main() {
   });
 
   group('fake', () {
+    test('records toOthers as it is used: null when not a socket id', () async {
+      BroadcastFake fake = Broadcast.fake();
+      await Broadcast.event(News(), toOthers: Broadcast.roomOf('news'));
+      expect(fake.broadcasted.single.toOthers, isNull);
+    });
+
     test('keeps events and sends nothing', () async {
       BroadcastFake fake = Broadcast.fake();
       sio.Socket a = await client();
       await subscribe(a, 'news');
       List<Object?> got = collect(a, 'news.posted');
       fake.assertNothingBroadcasted();
-      await Broadcast.event(News(), toOthers: 'x');
+      await Broadcast.event(News(), toOthers: a.id);
       await broadcast(OrderShipped(4));
       await settle();
       expect(got, isEmpty);
@@ -999,7 +1005,7 @@ void main() {
       fake.assertBroadcasted<OrderShipped>(_isFour);
       fake.assertBroadcastedOn<OrderShipped>('private-orders.4');
       fake.assertBroadcastedTimes<News>(1);
-      expect(fake.broadcasted.first.toOthers, 'x');
+      expect(fake.broadcasted.first.toOthers, a.id);
       expect(
         () => fake.assertNotBroadcasted<News>(),
         throwsA(isA<AssertionError>()),

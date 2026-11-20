@@ -31,6 +31,14 @@ class SocketIoServer implements EngineConnectionListener {
     this._responder = const HttpResponder(),
   }) : adapter = adapter ?? InMemoryAdapter(),
        _ids = ids ?? IdGenerator() {
+    // ServerOptions is const, so it can not check this itself.
+    if (options.maxDepth < 1) {
+      throw ArgumentError.value(
+        options.maxDepth,
+        'maxDepth',
+        'must be 1 or more',
+      );
+    }
     engine = EngineServer(options: options, connectionListener: this);
     of(defaultNamespace);
   }
