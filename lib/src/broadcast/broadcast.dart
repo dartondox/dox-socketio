@@ -320,8 +320,12 @@ class Broadcast {
   }
 
   /// The socket id the client sent in the `X-Socket-ID` header, for
-  /// `toOthers`.
-  static String? socketId(IDoxRequest req) => req.header('x-socket-id');
+  /// `toOthers`. Null when it does not look like a socket id: the value is
+  /// used as a room to skip, so a room name there would skip that room.
+  static String? socketId(IDoxRequest req) {
+    String? id = req.header('x-socket-id');
+    return id != null && _socketId.hasMatch(id) ? id : null;
+  }
 
   /// Runs the rule of [channel] for [user]. Gives null when refused,
   /// true for an allowed public or private channel, and the member info
@@ -387,6 +391,9 @@ class Broadcast {
   /// instead. With no hook, it is sent at once.
   static Future<void> event(ShouldBroadcast event, {String? toOthers}) async {
     bool queued = event is ShouldBroadcastQueued;
+    // Drop a value that is not a socket id, so the fake, the queue and the
+    // send all see the same value.
+    if (toOthers != null && !_socketId.hasMatch(toOthers)) toOthers = null;
     BroadcastFake? fake = _fake;
     if (fake != null) {
       fake.broadcasted.add(
@@ -458,7 +465,9 @@ class Broadcast {
       );
     }
     String name = payload.event;
+    // A queued job can carry any value. Drop one that is not a socket id.
     String? toOthers = payload.except;
+    if (toOthers != null && !_socketId.hasMatch(toOthers)) toOthers = null;
     for (String channel in payload.channels) {
       List<Object?> args = <Object?>[channel, payload.data];
       String room = roomOf(channel);

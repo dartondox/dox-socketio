@@ -307,7 +307,11 @@ class Socket implements RemoteSocket {
   }
 
   void _onEvent(SocketPacket packet) {
-    List<Object?> payload = packet.data! as List<Object?>;
+    // The decoder lets only a non-empty list through. Check again, so a
+    // packet made some other way can not throw here.
+    Object? data = packet.data;
+    if (data is! List || data.isEmpty) return;
+    List<Object?> payload = data.cast<Object?>();
     String name = payload.first.toString();
     SocketEvent event = SocketEvent(
       name: name,

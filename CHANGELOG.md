@@ -1,3 +1,9 @@
+## Unreleased
+
+- Fix: an event packet with no data (`2` or `20`) threw in the server. In Dox it logged one error per packet, and a plain `SocketIoServer().listen()` did not catch it. Now only CONNECT and DISCONNECT may have no data. Any other packet with no data is a parse error and closes that client. A JSON `null` counts as data, so `40null` and `1null` are refused too, as in Node.js.
+- Security: a CONNECT `auth` nested about 200,000 levels deep parsed fine, then overflowed the stack when the server encoded it again (the `maxAuthSize` check, or `fetchSockets` with the Redis adapter). Now text packets are also limited to 32 levels by default, as binary packets were already. Deeper data closes the client. New `ServerOptions.maxDepth` changes the limit for both. It must be 1 or more, else `SocketIoServer` throws an `ArgumentError`. Node.js has no limit, so an app that sends deeper JSON should raise it. The `maxAuthSize` check also counts auth it can not encode as too big.
+- Security: `Broadcast.socketId(req)` gave the `X-Socket-ID` header as it was. That value is the socket to skip, so a room name there (`broadcast:private-user.42`) made `toOthers` skip the whole room. Now it gives null when the value is not a socket id. `Broadcast.event` also drops a bad `toOthers` value, so `BroadcastFake` and the queued payload see null. A broadcast job drops a bad value too.
+
 ## 3.2.1
 
 - Fix: `socket.join()` after the socket disconnected kept the socket id in the room store for ever. It now does nothing after the socket closed. A join in a middleware still works. Rooms joined by a socket that never connects (a middleware fails, or the client leaves first) are removed.

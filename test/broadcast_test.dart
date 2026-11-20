@@ -35,6 +35,19 @@ Map<String, Map<String, Object?>> users = <String, Map<String, Object?>>{
   'bob': <String, Object?>{'id': 2, 'name': 'Bob'},
 };
 
+/// A request with only an `X-Socket-ID` header.
+class _HeaderRequest implements IDoxRequest {
+  _HeaderRequest(this.socketId);
+
+  final String socketId;
+
+  @override
+  String? header(String key) => key == 'x-socket-id' ? socketId : null;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
+}
+
 /// The auth of a request, like `Auth` of dox_auth.
 class TestAuth implements IAuth {
   TestAuth(this._user);
@@ -698,6 +711,18 @@ void main() {
       expect(gotB, hasLength(1));
     });
 
+    test('a room name as socket id does not skip that room', () async {
+      sio.Socket a = await client();
+      await subscribe(a, 'news');
+      List<Object?> got = collect(a, 'news.posted');
+      String room = Broadcast.roomOf('news');
+      expect(Broadcast.socketId(_HeaderRequest(room)), isNull);
+      expect(Broadcast.socketId(_HeaderRequest(a.id!)), a.id);
+      // A queued job can carry any value too.
+      await Broadcast.event(News(), toOthers: room);
+      await waitFor(got, 1, 'news.posted');
+    });
+
     test('unsubscribe stops the events', () async {
       sio.Socket a = await client();
       await subscribe(a, 'news');
@@ -960,13 +985,19 @@ void main() {
   });
 
   group('fake', () {
+    test('records toOthers as it is used: null when not a socket id', () async {
+      BroadcastFake fake = Broadcast.fake();
+      await Broadcast.event(News(), toOthers: Broadcast.roomOf('news'));
+      expect(fake.broadcasted.single.toOthers, isNull);
+    });
+
     test('keeps events and sends nothing', () async {
       BroadcastFake fake = Broadcast.fake();
       sio.Socket a = await client();
       await subscribe(a, 'news');
       List<Object?> got = collect(a, 'news.posted');
       fake.assertNothingBroadcasted();
-      await Broadcast.event(News(), toOthers: 'x');
+      await Broadcast.event(News(), toOthers: a.id);
       await broadcast(OrderShipped(4));
       await settle();
       expect(got, isEmpty);
@@ -974,7 +1005,7 @@ void main() {
       fake.assertBroadcasted<OrderShipped>(_isFour);
       fake.assertBroadcastedOn<OrderShipped>('private-orders.4');
       fake.assertBroadcastedTimes<News>(1);
-      expect(fake.broadcasted.first.toOthers, 'x');
+      expect(fake.broadcasted.first.toOthers, a.id);
       expect(
         () => fake.assertNotBroadcasted<News>(),
         throwsA(isA<AssertionError>()),

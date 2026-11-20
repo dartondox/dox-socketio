@@ -114,6 +114,53 @@ void main() {
         as String;
   }
 
+  group('bad packets', () {
+    test('an event with no data closes only that client', () async {
+      await start(ServerOptions());
+      for (String frame in <String>['42', '420']) {
+        var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
+        ws.add('40');
+        await frames.moveNext(); // CONNECT answer
+        ws.add(frame);
+        expect(await closedWithin(frames, Duration(seconds: 2)), isTrue);
+      }
+      expect(reasons, <String>['parse error', 'parse error']);
+      var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
+      ws.add('40');
+      await frames.moveNext();
+      expect(frames.current, startsWith('40{"sid":'));
+      await ws.close();
+    });
+
+    test('maxDepth sets the deepest nesting', () async {
+      expect(const ServerOptions().maxDepth, 32);
+      String deep = '${'[' * 39}1${']' * 39}'; // 40 levels with the list
+      await start(ServerOptions());
+      var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
+      ws.add('40');
+      await frames.moveNext();
+      ws.add('42["e",$deep]');
+      expect(await closedWithin(frames, Duration(seconds: 2)), isTrue);
+      await io!.close();
+
+      await start(ServerOptions(maxDepth: 64));
+      List<Object?> got = <Object?>[];
+      io!.on(
+        'connection',
+        (Socket s) => s.on('e', (SocketEvent e) {
+          got.add(e.data);
+        }),
+      );
+      var (WebSocket ws2, StreamIterator<dynamic> frames2) = await openWs();
+      ws2.add('40');
+      await frames2.moveNext();
+      ws2.add('42["e",$deep]');
+      await Future<void>.delayed(Duration(milliseconds: 100));
+      expect(got, hasLength(1));
+      await ws2.close();
+    });
+  });
+
   group('binary packets', () {
     test('a binary packet before CONNECT closes the client', () async {
       await start(ServerOptions());
@@ -247,6 +294,35 @@ void main() {
       await start(ServerOptions(maxAuthSize: 20));
       var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
       ws.add('40{"token":"${'a' * 20}"}');
+      await frames.moveNext();
+      expect(frames.current, '44{"message":"auth payload too large"}');
+      ws.add('40{"token":"a"}');
+      await frames.moveNext();
+      expect(frames.current, startsWith('40{"sid":'));
+      await ws.close();
+    });
+
+    test('deeply nested auth is refused, the server keeps going', () async {
+      await start(ServerOptions(maxAuthSize: 1000));
+      var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
+      // Encoding this again would overflow the stack. The decoder refuses
+      // it first and closes the client.
+      ws.add('40{"a":${'[' * 200000}${']' * 200000}}');
+      expect(await closedWithin(frames, Duration(seconds: 2)), isTrue);
+      expect(connected, isEmpty);
+      var (WebSocket ws2, StreamIterator<dynamic> frames2) = await openWs();
+      ws2.add('40{"token":"a"}');
+      await frames2.moveNext();
+      expect(frames2.current, startsWith('40{"sid":'));
+      await ws2.close();
+    });
+
+    test('auth too deep to encode gets connect_error', () async {
+      // A high maxDepth lets the auth past the decoder. The size check can
+      // not encode it and counts it as too big.
+      await start(ServerOptions(maxDepth: 1000000, maxAuthSize: 1000));
+      var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
+      ws.add('40{"a":${'[' * 200000}${']' * 200000}}');
       await frames.moveNext();
       expect(frames.current, '44{"message":"auth payload too large"}');
       ws.add('40{"token":"a"}');

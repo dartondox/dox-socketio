@@ -16,6 +16,7 @@ class Client implements EngineSocketListener {
   Client(this.server, this.conn, {this._encoder = const SocketEncoder()})
     : _decoder = SocketDecoder(
         maxAttachments: server.options.maxAttachments,
+        maxDepth: server.options.maxDepth,
         maxAttachmentBytes: server.options.maxAttachmentBytes,
       ) {
     conn.listener = this;
@@ -135,9 +136,7 @@ class Client implements EngineSocketListener {
     }
     Object? auth = packet.data;
     int? maxAuthSize = server.options.maxAuthSize;
-    if (maxAuthSize != null &&
-        auth != null &&
-        utf8.encode(jsonEncode(auth)).length > maxAuthSize) {
+    if (maxAuthSize != null && auth != null && _isTooBig(auth, maxAuthSize)) {
       sendPacket(
         SocketPacket(
           type: SocketPacketType.connectError,
@@ -155,6 +154,19 @@ class Client implements EngineSocketListener {
       );
     } finally {
       _connecting.remove(packet.nsp);
+    }
+  }
+
+  /// True when [auth] as JSON is bigger than [max] bytes. Data that can not
+  /// be encoded (for example nested so deep that it overflows the stack)
+  /// counts as too big.
+  static bool _isTooBig(Object auth, int max) {
+    try {
+      return utf8.encode(jsonEncode(auth)).length > max;
+    } on StackOverflowError {
+      return true;
+    } on JsonUnsupportedObjectError {
+      return true;
     }
   }
 
