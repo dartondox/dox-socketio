@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:dox_socketio/dox_socketio.dart';
 import 'package:dox_socketio/src/engine/origin_check.dart';
@@ -39,11 +38,8 @@ void main() {
   test('deeply nested binary packet is a parse error', () {
     SocketDecoder decoder = SocketDecoder();
     String deep = '${'[' * 100}1${']' * 100}';
-    decoder.add('51-["e",$deep]');
-    expect(
-      () => decoder.add(Uint8List.fromList(<int>[1])),
-      throwsFormatException,
-    );
+    // Refused at the text part, before any binary part comes.
+    expect(() => decoder.add('51-["e",$deep]'), throwsFormatException);
   });
 
   test('maxAttachments in ServerOptions limits binary parts', () async {

@@ -277,6 +277,32 @@ void main() {
         ..add('51-["a",{"_placeholder":true,"num":4}]');
       expect(() => badNum.add(Uint8List(1)), throwsFormatException);
     });
+
+    test('only CONNECT and DISCONNECT may have no data', () {
+      expect(SocketDecoder().add('0')!.data, isNull);
+      expect(SocketDecoder().add('1/chat,')!.data, isNull);
+      for (String text in <String>['2', '20', '2/chat,', '3', '31', '4']) {
+        expect(() => SocketDecoder().add(text), throwsFormatException);
+      }
+      expect(() => SocketDecoder().add('51-'), throwsFormatException);
+      expect(() => SocketDecoder().add('61-1'), throwsFormatException);
+    });
+
+    test('rejects data nested deeper than maxDepth', () {
+      String deep(int n) => '${'[' * n}1${']' * n}';
+      expect(SocketDecoder().add('2["e",${deep(31)}]'), isNotNull);
+      expect(
+        () => SocketDecoder().add('2["e",${deep(32)}]'),
+        throwsFormatException,
+      );
+      expect(
+        () => SocketDecoder().add('0{"a":${deep(200000)}}'),
+        throwsFormatException,
+      );
+      // Brackets inside strings do not count.
+      String brackets = '[' * 100;
+      expect(SocketDecoder().add('2["e","\\"$brackets"]'), isNotNull);
+    });
   });
 
   group('IdGenerator', () {

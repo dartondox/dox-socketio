@@ -12,8 +12,9 @@ class SocketDecoder {
   /// [maxAttachments] is the most binary parts one packet may have.
   /// The parts are kept in memory until the last one comes.
   ///
-  /// [maxDepth] is the deepest nesting of lists and maps in a binary
-  /// packet. Deeper data is refused, so it can not overflow the stack.
+  /// [maxDepth] is the deepest nesting of lists and maps in a packet.
+  /// Deeper data is refused, so it can not overflow the stack later, when
+  /// the data is encoded again.
   ///
   /// [maxAttachmentBytes] is the most bytes of all binary parts of one
   /// packet. Null means no limit.
@@ -163,6 +164,7 @@ class SocketDecoder {
 
     Object? data;
     if (i < text.length) {
+      _checkDepth(text, i);
       try {
         // Parse from [i] on, with no copy of the text.
         _OneValue value = _OneValue();
@@ -173,9 +175,10 @@ class SocketDecoder {
       } on FormatException {
         throw FormatException('invalid payload', text);
       }
-      if (!_isPayloadValid(type, data)) {
-        throw FormatException('invalid payload', text);
-      }
+    }
+    // Also with no payload: only CONNECT and DISCONNECT may have no data.
+    if (!_isPayloadValid(type, data)) {
+      throw FormatException('invalid payload', text);
     }
     return _DecodedText(
       SocketPacket(type: type, nsp: nsp, data: data, id: id),
@@ -185,12 +188,38 @@ class SocketDecoder {
 
   bool _isDigit(int code) => code >= 48 && code <= 57;
 
+  /// Throws when the JSON from [start] on nests lists and maps deeper than
+  /// [maxDepth]. The JSON parser itself does not limit it, but encoding
+  /// such data again (size check, logs, adapters) overflows the stack.
+  void _checkDepth(String text, int start) {
+    // Deeper JSON needs more than two brackets per level.
+    if (text.length - start <= maxDepth * 2) return;
+    int depth = 0;
+    bool inString = false;
+    for (int j = start; j < text.length; j++) {
+      int code = text.codeUnitAt(j);
+      if (inString) {
+        if (code == 0x5C) {
+          j++; // Skip the escaped character.
+        } else if (code == 0x22) {
+          inString = false;
+        }
+      } else if (code == 0x22) {
+        inString = true;
+      } else if (code == 0x5B || code == 0x7B) {
+        if (++depth > maxDepth) throw FormatException('nested too deep');
+      } else if (code == 0x5D || code == 0x7D) {
+        depth--;
+      }
+    }
+  }
+
   bool _isPayloadValid(SocketPacketType type, Object? data) {
     switch (type) {
       case SocketPacketType.connect:
-        return data is Map;
+        return data == null || data is Map;
       case SocketPacketType.disconnect:
-        return false;
+        return data == null;
       case SocketPacketType.connectError:
         return data is String || data is Map;
       case SocketPacketType.event:

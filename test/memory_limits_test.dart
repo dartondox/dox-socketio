@@ -255,6 +255,21 @@ void main() {
       await ws.close();
     });
 
+    test('deeply nested auth is refused, the server keeps going', () async {
+      await start(ServerOptions(maxAuthSize: 1000));
+      var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
+      // Encoding this again would overflow the stack. The decoder refuses
+      // it first and closes the client.
+      ws.add('40{"a":${'[' * 200000}${']' * 200000}}');
+      expect(await closedWithin(frames, Duration(seconds: 2)), isTrue);
+      expect(connected, isEmpty);
+      var (WebSocket ws2, StreamIterator<dynamic> frames2) = await openWs();
+      ws2.add('40{"token":"a"}');
+      await frames2.moveNext();
+      expect(frames2.current, startsWith('40{"sid":'));
+      await ws2.close();
+    });
+
     test('no limit by default', () async {
       await start(ServerOptions());
       var (WebSocket ws, StreamIterator<dynamic> frames) = await openWs();
