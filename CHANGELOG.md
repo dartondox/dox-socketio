@@ -1,4 +1,4 @@
-## Unreleased
+## 3.2.2
 
 - Fix: an event packet with no data (`2` or `20`) threw in the server. In Dox it logged one error per packet, and a plain `SocketIoServer().listen()` did not catch it. Now only CONNECT and DISCONNECT may have no data. Any other packet with no data is a parse error and closes that client. A JSON `null` counts as data, so `40null` and `1null` are refused too, as in Node.js.
 - Security: a CONNECT `auth` nested about 200,000 levels deep parsed fine, then overflowed the stack when the server encoded it again (the `maxAuthSize` check, or `fetchSockets` with the Redis adapter). Now text packets are also limited to 32 levels by default, as binary packets were already. Deeper data closes the client. New `ServerOptions.maxDepth` changes the limit for both. It must be 1 or more, else `SocketIoServer` throws an `ArgumentError`. Node.js has no limit, so an app that sends deeper JSON should raise it. The `maxAuthSize` check also counts auth it can not encode as too big.
