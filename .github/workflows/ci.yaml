@@ -36,6 +36,7 @@ jobs:
         with:
           workspaces: |
             ../dox-http-native/native -> target
+            ../dox-http-native/packages/dox-http-native/native -> target
       # Builds the native libraries of the clones, for this machine only.
       - run: ci/use-siblings.sh build
       - run: dart pub get
